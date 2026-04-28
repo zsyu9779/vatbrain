@@ -4,11 +4,27 @@
 
 ## 项目状态
 
-- **阶段**: v0.1 Phase 4 完成，准备 Phase 5 (端到端集成测试)
+- **阶段**: v0.1 完成，v0.2 调研启动
 - **语言**: Go (go 1.25.5)
 - **版本定位**: MCP Server 就位，AI Agent 可通过 MCP 协议调用记忆系统
 
-## 最近工作（2026-04-27）— Phase 4 MCP Server
+## 最近工作（2026-04-29）— v0.2 存储重构调研
+
+### 存储层可插拔重构草案
+
+- 创建 `docs/v0.2/00-storage-refactor-draft.md`
+- 核心目标：定义 `MemoryStore` 接口，让 VatBrain 支持 SQLite / Neo4j+pgvector / In-Memory 三种后端
+- SQLite 后端可实现零 Docker 快速启动，解决 v0.1 "必须 4 容器才能跑"的痛点
+- 与 HOC v0.4 集成方案联动：HOC 将 VatBrain 作为 Go 库引入，需要 SQLite 后端
+
+## 下一步
+
+- 等待审查技术草案
+- 确定后进入详细技术规约 + Phase 1 实施（MemoryStore 接口定义）
+
+---
+
+## 历史（2026-04-27）— Phase 4 MCP Server
 
 ### 完成事项
 
