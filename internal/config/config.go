@@ -12,9 +12,22 @@ import (
 	"github.com/vatbrain/vatbrain/internal/db/redis"
 )
 
+// StoreConfig selects the storage backend and holds backend-specific config.
+type StoreConfig struct {
+	Backend string // "sqlite" (default), "neo4j+pgvector", "memory"
+	SQLite  SQLiteConfig
+}
+
+// SQLiteConfig holds configuration for the SQLite backend.
+type SQLiteConfig struct {
+	Path string // e.g. "./vatbrain.db"
+	WAL  bool   // enable WAL mode
+}
+
 // Config holds all configuration for the VatBrain server.
 type Config struct {
-	Port int
+	Port  int
+	Store StoreConfig
 
 	Neo4j    neo4j.Config
 	Pgvector pgvector.Config
@@ -26,6 +39,7 @@ type Config struct {
 	PatternSeparation PatternSeparationConfig
 	Retrieval         RetrievalConfig
 	Consolidation     ConsolidationConfig
+	Scheduler         SchedulerConfig
 }
 
 // WeightDecayConfig holds tunable parameters for the weight decay engine.
@@ -59,10 +73,26 @@ type ConsolidationConfig struct {
 	AccuracyThreshold float64
 }
 
+// SchedulerConfig holds parameters for the background cron scheduler.
+type SchedulerConfig struct {
+	Enabled bool
+	// ConsolidationCron is the cron expression for the daily consolidation job.
+	// Default "0 3 * * *" (3 AM daily).
+	ConsolidationCron string
+}
+
 // LoadFromEnv reads configuration from environment variables with defaults.
 func LoadFromEnv() Config {
 	return Config{
 		Port: envInt("PORT", 8080),
+
+		Store: StoreConfig{
+			Backend: envStr("VATBRAIN_STORE_BACKEND", "sqlite"),
+			SQLite: SQLiteConfig{
+				Path: envStr("VATBRAIN_SQLITE_PATH", "./vatbrain.db"),
+				WAL:  envBool("VATBRAIN_SQLITE_WAL", true),
+			},
+		},
 
 		Neo4j: neo4j.Config{
 			URI:                  envStr("NEO4J_URI", "bolt://localhost:7687"),
@@ -119,6 +149,11 @@ func LoadFromEnv() Config {
 			HoursToScan:       envFloat("CONSOLIDATION_HOURS_TO_SCAN", 24),
 			MinClusterSize:    envInt("CONSOLIDATION_MIN_CLUSTER_SIZE", 3),
 			AccuracyThreshold: envFloat("CONSOLIDATION_ACCURACY_THRESHOLD", 0.7),
+		},
+
+		Scheduler: SchedulerConfig{
+			Enabled:           envBool("SCHEDULER_ENABLED", true),
+			ConsolidationCron: envStr("SCHEDULER_CONSOLIDATION_CRON", "0 3 * * *"),
 		},
 	}
 }

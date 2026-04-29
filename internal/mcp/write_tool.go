@@ -3,16 +3,16 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/vatbrain/vatbrain/internal/app"
 	"github.com/vatbrain/vatbrain/internal/core"
 	"github.com/vatbrain/vatbrain/internal/models"
+	"github.com/vatbrain/vatbrain/internal/store"
+	"github.com/vatbrain/vatbrain/internal/vector"
 )
 
 func writeMemoryTool(a *app.App) server.ServerTool {
@@ -53,13 +53,8 @@ func writeMemoryTool(a *app.App) server.ServerTool {
 			userConfirmed := req.GetBool("user_confirmed", false)
 			isCorrection := req.GetBool("is_correction", false)
 
-			// Fetch working-memory cycles from Redis.
-			cyclesKey := fmt.Sprintf("working_memory:%s", projectID)
-			summaries, rErr := a.Redis.LRange(ctx, cyclesKey, 0, -1)
-			if rErr != nil && rErr.Error() != "redis: nil" {
-				slog.Warn("redis lrange working memory", "err", rErr)
-			}
-
+			// Fetch working-memory cycles from in-process buffer.
+			summaries := a.WorkingMemory.GetAll(projectID)
 			workingMemory := make([]core.WorkingMemoryCycle, len(summaries))
 			for i, s := range summaries {
 				workingMemory[i] = core.WorkingMemoryCycle{Summary: s}
@@ -90,8 +85,12 @@ func writeMemoryTool(a *app.App) server.ServerTool {
 				return mcp.NewToolResultError(fmt.Sprintf("embedding failed: %v", embErr)), nil
 			}
 
-			// Search for similar existing memories.
-			candidates, simErr := a.Pgvector.SimilaritySearch(ctx, embedding, 5, nil)
+			// Search for similar existing memories via Store.
+			candidates, simErr := a.Store.SearchEpisodic(ctx, store.EpisodicSearchRequest{
+				ProjectID: projectID,
+				Embedding: vector.Float32To64(embedding),
+				Limit:     5,
+			})
 			if simErr != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("similarity search failed: %v", simErr)), nil
 			}
@@ -102,59 +101,47 @@ func writeMemoryTool(a *app.App) server.ServerTool {
 				EntityID:  entityID,
 			}
 
+			emb64 := vector.Float32To64(embedding)
+
 			// Check each similar candidate for merge.
 			for _, candidate := range candidates {
-				candidateEmb, cEmbErr := a.Pgvector.GetEmbedding(ctx, candidate.MemoryID)
-				if cEmbErr != nil {
-					slog.Warn("pgvector get embedding", "memory_id", candidate.MemoryID, "err", cEmbErr)
+				if len(candidate.ContextVector) == 0 {
 					continue
 				}
 
-				candidateProjectID, _ := stringFromMeta(candidate.Metadata, "project_id")
-				candidateLang, _ := stringFromMeta(candidate.Metadata, "language")
-				candidateEntity, _ := stringFromMeta(candidate.Metadata, "entity_id")
+				candEmb := vector.Float32To64(candidate.ContextVector)
 
 				candidateCtx := core.SeparationContext{
-					ProjectID: candidateProjectID,
-					Language:  candidateLang,
-					EntityID:  candidateEntity,
+					ProjectID: candidate.ProjectID,
+					Language:  candidate.Language,
+					EntityID:  candidate.EntityGroup,
 				}
 
-				sepResult := a.PatternSeparation.Check(embedding, candidateEmb, newCtx, candidateCtx)
+				sepResult := a.PatternSeparation.Check(embedding, candidate.ContextVector, newCtx, candidateCtx)
 				if !sepResult.ShouldMerge {
 					continue
 				}
 
 				// Merge: update existing memory.
-				parsedID, pErr := uuid.Parse(candidate.MemoryID)
-				if pErr != nil {
+				existing, gErr := a.Store.GetEpisodic(ctx, candidate.ID)
+				if gErr != nil {
 					continue
 				}
 
 				now := time.Now()
-				newWeight := clampWeight(candidate.Similarity + 0.1)
+				sim := vector.CosineSimilarity(emb64, candEmb)
+				newWeight := clampWeight(sim + 0.1)
 
-				_, uErr := a.Neo4j.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-					_, err := tx.Run(ctx, `
-					MATCH (e:EpisodicMemory {id: $id})
-					SET e.weight = $weight,
-					    e.last_accessed_at = $now,
-					    e.summary = e.summary + '\n' + $newSummary
-					RETURN e.id
-				`, map[string]any{
-						"id":         candidate.MemoryID,
-						"weight":     newWeight,
-						"now":        now,
-						"newSummary": summary,
-					})
-					return nil, err
-				})
-				if uErr != nil {
+				existing.Summary = existing.Summary + "\n" + summary
+				existing.Weight = newWeight
+				existing.LastAccessedAt = &now
+
+				if uErr := a.Store.WriteEpisodic(ctx, existing); uErr != nil {
 					return mcp.NewToolResultError(fmt.Sprintf("merge update failed: %v", uErr)), nil
 				}
 
 				resp, jErr := mcp.NewToolResultJSON(writeMemoryOutput{
-					MemoryID:    parsedID,
+					MemoryID:    candidate.ID,
 					Persisted:   true,
 					GateReason:  gateResult.Reason,
 					MergeAction: string(models.MergeActionUpdatedExisting),
@@ -171,58 +158,30 @@ func writeMemoryTool(a *app.App) server.ServerTool {
 			now := time.Now()
 			effFreq, weight := a.WeightDecay.ComputeFull([]time.Time{now}, now, now)
 
-			_, cErr := a.Neo4j.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-				_, err := tx.Run(ctx, `
-				CREATE (e:EpisodicMemory {
-					id: $id,
-					project_id: $projectID,
-					language: $language,
-					task_type: $taskType,
-					summary: $summary,
-					source_type: $sourceType,
-					trust_level: $trustLevel,
-					weight: $weight,
-					effective_frequency: $effFreq,
-					created_at: $createdAt,
-					entity_group: $entityGroup,
-					embedding_id: $embeddingID,
-					full_snapshot_uri: ''
-				})
-				RETURN e.id
-			`, map[string]any{
-					"id":          memoryID.String(),
-					"projectID":   projectID,
-					"language":    language,
-					"taskType":    taskType,
-					"summary":     summary,
-					"sourceType":  string(models.SourceTypeLLM),
-					"trustLevel":  int(models.DefaultTrustLevel),
-					"weight":      weight,
-					"effFreq":     effFreq,
-					"createdAt":   now,
-					"entityGroup": entityID,
-					"embeddingID": memoryID.String(),
-				})
-				return nil, err
-			})
-			if cErr != nil {
+			mem := &models.EpisodicMemory{
+				ID:                 memoryID,
+				ProjectID:          projectID,
+				Language:           language,
+				TaskType:           models.TaskType(taskType),
+				Summary:            summary,
+				SourceType:         models.SourceTypeLLM,
+				TrustLevel:         models.DefaultTrustLevel,
+				Weight:             weight,
+				EffectiveFrequency: effFreq,
+				CreatedAt:          now,
+				EntityGroup:        entityID,
+				ContextVector:      embedding,
+			}
+
+			if cErr := a.Store.WriteEpisodic(ctx, mem); cErr != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("create memory failed: %v", cErr)), nil
 			}
 
-			// Insert embedding into pgvector.
-			if insErr := a.Pgvector.InsertEmbedding(ctx, memoryID.String(), embedding,
-				summary, projectID, language, taskType,
-				map[string]any{"entity_id": entityID}); insErr != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("embedding insert failed: %v", insErr)), nil
-			}
+			// Link to related memories.
+			core.LinkOnWrite(ctx, a.Store, memoryID, summary, projectID)
 
 			// Push to working-memory cycles.
-			if pushErr := a.Redis.LPush(ctx, cyclesKey, summary); pushErr != nil {
-				slog.Warn("redis lpush working memory", "err", pushErr)
-			}
-			if trimErr := a.Redis.LTrim(ctx, cyclesKey, 0, 19); trimErr != nil {
-				slog.Warn("redis ltrim working memory", "err", trimErr)
-			}
+			a.WorkingMemory.Push(projectID, summary)
 
 			resp, jErr := mcp.NewToolResultJSON(writeMemoryOutput{
 				MemoryID:    memoryID,

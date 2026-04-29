@@ -96,6 +96,12 @@ func (c *Client) LTrim(ctx context.Context, key string, start, stop int64) error
 	return c.rc.LTrim(ctx, key, start, stop).Err()
 }
 
+// SetNX sets key to value if it does not exist, with an optional TTL.
+// Returns true if the key was set, false if it already existed.
+func (c *Client) SetNX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	return c.rc.SetNX(ctx, key, value, ttl).Result()
+}
+
 // LRange returns the specified elements of a list.
 func (c *Client) LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
 	return c.rc.LRange(ctx, key, start, stop).Result()

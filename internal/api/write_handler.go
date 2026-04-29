@@ -2,20 +2,20 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/vatbrain/vatbrain/internal/core"
 	"github.com/vatbrain/vatbrain/internal/models"
+	"github.com/vatbrain/vatbrain/internal/store"
+	"github.com/vatbrain/vatbrain/internal/vector"
 )
 
 // handleWrite implements POST /api/v0/memories/episodic.
 //
-// Pipeline: Significance Gate → embed → Pattern Separation → persist (Neo4j + pgvector).
+// Pipeline: Significance Gate → embed → Pattern Separation → persist via Store.
 func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 	var req models.WriteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -34,16 +34,11 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Fetch working-memory cycles from Redis.
-	cyclesKey := fmt.Sprintf("working_memory:%s", req.ProjectID)
-	summaries, err := s.Redis.LRange(ctx, cyclesKey, 0, -1)
-	if err != nil && err.Error() != "redis: nil" {
-		slog.Warn("redis lrange working memory", "err", err)
-	}
-
+	// Fetch working-memory cycles from in-process buffer.
+	summaries := s.WorkingMemory.GetAll(req.ProjectID)
 	workingMemory := make([]core.WorkingMemoryCycle, len(summaries))
-	for i, s := range summaries {
-		workingMemory[i] = core.WorkingMemoryCycle{Summary: s}
+	for i, sum := range summaries {
+		workingMemory[i] = core.WorkingMemoryCycle{Summary: sum}
 	}
 
 	// Evaluate significance gate.
@@ -70,10 +65,14 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Search for similar existing memories.
-	candidates, err := s.Pgvector.SimilaritySearch(ctx, embedding, 5, nil)
+	// Search for similar existing memories via Store.
+	candidates, err := s.Store.SearchEpisodic(ctx, store.EpisodicSearchRequest{
+		ProjectID: req.ProjectID,
+		Embedding: vector.Float32To64(embedding),
+		Limit:     5,
+	})
 	if err != nil {
-		slog.Error("pgvector similarity search", "err", err)
+		slog.Error("store search episodics", "err", err)
 		respondError(w, http.StatusInternalServerError, "similarity search failed")
 		return
 	}
@@ -84,61 +83,50 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		EntityID:  req.Content.EntityID,
 	}
 
+	emb64 := vector.Float32To64(embedding)
+
 	// Check each similar candidate for merge.
 	for _, candidate := range candidates {
-		candidateEmb, err := s.Pgvector.GetEmbedding(ctx, candidate.MemoryID)
-		if err != nil {
-			slog.Warn("pgvector get embedding", "memory_id", candidate.MemoryID, "err", err)
+		if len(candidate.ContextVector) == 0 {
 			continue
 		}
 
-		candidateProjectID, _ := stringFromMeta(candidate.Metadata, "project_id")
-		candidateLang, _ := stringFromMeta(candidate.Metadata, "language")
-		candidateEntity, _ := stringFromMeta(candidate.Metadata, "entity_id")
+		candEmb := vector.Float32To64(candidate.ContextVector)
 
 		candidateCtx := core.SeparationContext{
-			ProjectID: candidateProjectID,
-			Language:  candidateLang,
-			EntityID:  candidateEntity,
+			ProjectID: candidate.ProjectID,
+			Language:  candidate.Language,
+			EntityID:  candidate.EntityGroup,
 		}
 
-		sepResult := s.PatternSeparation.Check(embedding, candidateEmb, newCtx, candidateCtx)
+		sepResult := s.PatternSeparation.Check(embedding, candidate.ContextVector, newCtx, candidateCtx)
 		if !sepResult.ShouldMerge {
 			continue
 		}
 
 		// Merge: update existing memory.
-		parsedID, err := uuid.Parse(candidate.MemoryID)
+		existing, err := s.Store.GetEpisodic(ctx, candidate.ID)
 		if err != nil {
+			slog.Warn("get episodic for merge", "memory_id", candidate.ID, "err", err)
 			continue
 		}
 
 		now := time.Now()
-		newWeight := clampWeight(candidate.Similarity + 0.1)
+		sim := vector.CosineSimilarity(emb64, candEmb)
+		newWeight := clampWeight(sim + 0.1)
 
-		_, err = s.Neo4j.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-			_, err := tx.Run(ctx, `
-				MATCH (e:EpisodicMemory {id: $id})
-				SET e.weight = $weight,
-				    e.last_accessed_at = $now,
-				    e.summary = e.summary + '\n' + $newSummary
-				RETURN e.id
-			`, map[string]any{
-				"id":         candidate.MemoryID,
-				"weight":     newWeight,
-				"now":        now,
-				"newSummary": req.Content.Summary,
-			})
-			return nil, err
-		})
-		if err != nil {
-			slog.Error("neo4j merge update", "err", err)
+		existing.Summary = existing.Summary + "\n" + req.Content.Summary
+		existing.Weight = newWeight
+		existing.LastAccessedAt = &now
+
+		if err := s.Store.WriteEpisodic(ctx, existing); err != nil {
+			slog.Error("store merge update", "err", err)
 			respondError(w, http.StatusInternalServerError, "merge update failed")
 			return
 		}
 
 		respondJSON(w, http.StatusOK, models.WriteResponse{
-			MemoryID:    parsedID,
+			MemoryID:    candidate.ID,
 			Persisted:   true,
 			GateReason:  gateResult.Reason,
 			MergeAction: models.MergeActionUpdatedExisting,
@@ -152,65 +140,32 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	effFreq, weight := s.WeightDecay.ComputeFull([]time.Time{now}, now, now)
 
-	_, err = s.Neo4j.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		_, err := tx.Run(ctx, `
-			CREATE (e:EpisodicMemory {
-				id: $id,
-				project_id: $projectID,
-				language: $language,
-				task_type: $taskType,
-				summary: $summary,
-				source_type: $sourceType,
-				trust_level: $trustLevel,
-				weight: $weight,
-				effective_frequency: $effFreq,
-				created_at: $createdAt,
-				entity_group: $entityGroup,
-				embedding_id: $embeddingID,
-				full_snapshot_uri: ''
-			})
-			RETURN e.id
-		`, map[string]any{
-			"id":          memoryID.String(),
-			"projectID":   req.ProjectID,
-			"language":    req.Language,
-			"taskType":    string(req.TaskType),
-			"summary":     req.Content.Summary,
-			"sourceType":  string(models.SourceTypeLLM),
-			"trustLevel":  int(models.DefaultTrustLevel),
-			"weight":      weight,
-			"effFreq":     effFreq,
-			"createdAt":   now,
-			"entityGroup": req.Content.EntityID,
-			"embeddingID": memoryID.String(),
-		})
-		return nil, err
-	})
-	if err != nil {
-		slog.Error("neo4j create episodic", "err", err)
+	mem := &models.EpisodicMemory{
+		ID:                 memoryID,
+		ProjectID:          req.ProjectID,
+		Language:           req.Language,
+		TaskType:           req.TaskType,
+		Summary:            req.Content.Summary,
+		SourceType:         models.SourceTypeLLM,
+		TrustLevel:         models.DefaultTrustLevel,
+		Weight:             weight,
+		EffectiveFrequency: effFreq,
+		CreatedAt:          now,
+		EntityGroup:        req.Content.EntityID,
+		ContextVector:      embedding,
+	}
+
+	if err := s.Store.WriteEpisodic(ctx, mem); err != nil {
+		slog.Error("store create episodic", "err", err)
 		respondError(w, http.StatusInternalServerError, "create memory failed")
 		return
 	}
 
-	// Insert embedding into pgvector.
-	err = s.Pgvector.InsertEmbedding(ctx, memoryID.String(), embedding,
-		req.Content.Summary, req.ProjectID, req.Language, string(req.TaskType),
-		map[string]any{
-			"entity_id": req.Content.EntityID,
-		})
-	if err != nil {
-		slog.Error("pgvector insert", "err", err)
-		respondError(w, http.StatusInternalServerError, "embedding insert failed")
-		return
-	}
+	// Link to related memories via RELATES_TO edges.
+	core.LinkOnWrite(ctx, s.Store, memoryID, req.Content.Summary, req.ProjectID)
 
 	// Push to working-memory cycles.
-	if pushErr := s.Redis.LPush(ctx, cyclesKey, req.Content.Summary); pushErr != nil {
-		slog.Warn("redis lpush working memory", "err", pushErr)
-	}
-	if trimErr := s.Redis.LTrim(ctx, cyclesKey, 0, 19); trimErr != nil {
-		slog.Warn("redis ltrim working memory", "err", trimErr)
-	}
+	s.WorkingMemory.Push(req.ProjectID, req.Content.Summary)
 
 	respondJSON(w, http.StatusOK, models.WriteResponse{
 		MemoryID:    memoryID,
@@ -219,28 +174,4 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		MergeAction: models.MergeActionCreatedNew,
 		Weight:      weight,
 	})
-}
-
-// clampWeight ensures the weight stays in [0, 1].
-func clampWeight(w float64) float64 {
-	if w < 0 {
-		return 0
-	}
-	if w > 1 {
-		return 1
-	}
-	return w
-}
-
-// stringFromMeta extracts a string value from pgvector metadata.
-func stringFromMeta(meta map[string]any, key string) (string, bool) {
-	if meta == nil {
-		return "", false
-	}
-	v, ok := meta[key]
-	if !ok {
-		return "", false
-	}
-	s, ok := v.(string)
-	return s, ok
 }

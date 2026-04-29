@@ -64,7 +64,7 @@ func (g *SignificanceGate) Evaluate(event WriteEvent, workingMemory []WorkingMem
 func (g *SignificanceGate) countRecentCycles(event WriteEvent, cycles []WorkingMemoryCycle) int {
 	count := 0
 	for _, c := range cycles {
-		if topicOverlap(event.Summary, c.Summary) {
+		if TokenOverlap(event.Summary, c.Summary) {
 			count++
 		}
 	}
@@ -74,11 +74,12 @@ func (g *SignificanceGate) countRecentCycles(event WriteEvent, cycles []WorkingM
 // topicOverlap is a v0.1 approximation for semantic similarity between two
 // summaries. It checks whether the summaries share any significant words.
 // Phase 2+ can replace this with embedding similarity.
-func topicOverlap(a, b string) bool {
+// TokenOverlap checks if two strings share meaningful tokens (longer than 3 chars).
+func TokenOverlap(a, b string) bool {
 	// Simple token overlap: split on whitespace and check for shared tokens
 	// longer than 3 characters (to skip noise words).
-	aTokens := tokenize(a)
-	bTokens := tokenize(b)
+	aTokens := Tokenize(a)
+	bTokens := Tokenize(b)
 
 	aLen, bLen := len(aTokens), len(bTokens)
 	if aLen == 0 || bLen == 0 {
@@ -108,12 +109,12 @@ func topicOverlap(a, b string) bool {
 	return float64(matches)/float64(smaller) > 0.3
 }
 
-// tokenize splits text into lowercase tokens longer than 3 chars.
-func tokenize(s string) []string {
+// Tokenize splits text into lowercase tokens longer than 3 chars.
+func Tokenize(s string) []string {
 	var tokens []string
 	start := -1
 	for i, r := range s {
-		if isAlphaNum(r) {
+		if IsAlphaNum(r) {
 			if start < 0 {
 				start = i
 			}
@@ -130,7 +131,8 @@ func tokenize(s string) []string {
 	return tokens
 }
 
-func isAlphaNum(r rune) bool {
+// IsAlphaNum reports whether the rune is alphanumeric.
+func IsAlphaNum(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 

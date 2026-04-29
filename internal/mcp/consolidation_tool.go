@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,10 +27,6 @@ func triggerConsolidationTool(a *app.App) server.ServerTool {
 	return server.ServerTool{
 		Tool: tool,
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			if a.Redis == nil {
-				return mcp.NewToolResultError("Redis is not configured"), nil
-			}
-
 			if hrs := req.GetFloat("hours_to_scan", 0); hrs > 0 {
 				a.Consolidation.HoursToScan = hrs
 			}
@@ -50,25 +45,24 @@ func triggerConsolidationTool(a *app.App) server.ServerTool {
 				StartedAt: now,
 			}
 
-			runKey := fmt.Sprintf("consolidation:run:%s", runID.String())
-			if err := a.Redis.SetJSON(ctx, runKey, initial, 24*time.Hour); err != nil {
+			if err := a.Store.SaveConsolidationRun(ctx, &initial); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("failed to save run state: %v", err)), nil
 			}
 
 			go func() {
 				defer func() {
 					if rec := recover(); rec != nil {
-						slog.Error("consolidation panic", "panic", rec)
+						_ = rec
 					}
 				}()
 
-				result, rErr := a.Consolidation.Run(ctx, a.Neo4j, a.Pgvector, a.Embedder)
+				result, rErr := a.Consolidation.Run(ctx, a.Store, a.Embedder)
 				if rErr != nil {
-					slog.Error("consolidation run failed", "err", rErr)
+					_ = rErr
 				}
 
-				if saveErr := a.Redis.SetJSON(ctx, runKey, result, 24*time.Hour); saveErr != nil {
-					slog.Error("redis save consolidation result", "err", saveErr)
+				if saveErr := a.Store.SaveConsolidationRun(ctx, &result); saveErr != nil {
+					_ = saveErr
 				}
 			}()
 

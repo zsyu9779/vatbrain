@@ -12,6 +12,8 @@ import (
 	"github.com/vatbrain/vatbrain/internal/core"
 	"github.com/vatbrain/vatbrain/internal/embedder"
 	vatmcp "github.com/vatbrain/vatbrain/internal/mcp"
+	"github.com/vatbrain/vatbrain/internal/store"
+	"github.com/vatbrain/vatbrain/internal/store/memory"
 )
 
 // minimalApp creates an App with only engines and a stub embedder for testing.
@@ -19,6 +21,8 @@ func minimalApp() *app.App {
 	cfg := config.LoadFromEnv()
 	return &app.App{
 		Config:             cfg,
+		Store:              memory.NewStore(),
+		WorkingMemory:      store.NewWorkingMemoryBuffer(20),
 		WeightDecay:        core.DefaultWeightDecayEngine(),
 		SignificanceGate:   core.DefaultSignificanceGate(),
 		PatternSeparation:  core.DefaultPatternSeparation(),

@@ -126,14 +126,14 @@ func TestSignificanceGate_CustomMinCounts(t *testing.T) {
 }
 
 func TestTopicOverlap_SharedKeywords(t *testing.T) {
-	assert.True(t, topicOverlap(
+	assert.True(t, TokenOverlap(
 		"Redis connection pool exhausted at MaxOpenConns=50",
 		"Redis pool size configuration issue in production",
 	))
 }
 
 func TestTopicOverlap_NoSharedKeywords(t *testing.T) {
-	assert.False(t, topicOverlap(
+	assert.False(t, TokenOverlap(
 		"Redis connection pool exhausted",
 		"Database migration rollback failure",
 	))
@@ -141,19 +141,19 @@ func TestTopicOverlap_NoSharedKeywords(t *testing.T) {
 
 func TestTopicOverlap_ShortWordsIgnored(t *testing.T) {
 	// "the" "and" "is" are <= 3 chars and should be ignored
-	assert.False(t, topicOverlap(
+	assert.False(t, TokenOverlap(
 		"the cat is big",
 		"the dog is big",
 	))
 }
 
 func TestTokenize(t *testing.T) {
-	tokens := tokenize("Redis connection pool exhausted")
+	tokens := Tokenize("Redis connection pool exhausted")
 	expected := []string{"redis", "connection", "pool", "exhausted"}
 	assert.Equal(t, expected, tokens)
 }
 
 func TestTokenize_SkipsShortWords(t *testing.T) {
-	tokens := tokenize("the cat is big")
+	tokens := Tokenize("the cat is big")
 	assert.Empty(t, tokens) // all words <= 3 chars
 }

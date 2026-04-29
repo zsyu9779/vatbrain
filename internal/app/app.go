@@ -15,21 +15,30 @@ import (
 	"github.com/vatbrain/vatbrain/internal/db/pgvector"
 	"github.com/vatbrain/vatbrain/internal/db/redis"
 	"github.com/vatbrain/vatbrain/internal/embedder"
+	"github.com/vatbrain/vatbrain/internal/store"
 )
 
 // App holds all initialised application components.
 type App struct {
-	Config             config.Config
-	Neo4j              *neo4j.Client
-	Pgvector           *pgvector.Client
-	Redis              *redis.Client
-	Minio              *minio.Client
-	WeightDecay        *core.WeightDecayEngine
-	SignificanceGate   *core.SignificanceGate
-	PatternSeparation  *core.PatternSeparation
-	RetrievalEngine    *core.RetrievalEngine
-	Consolidation      *core.ConsolidationEngine
-	Embedder           embedder.Embedder
+	Config config.Config
+
+	// Store is the storage abstraction (v0.1.1).
+	Store store.MemoryStore
+	// WorkingMemory replaces Redis for working-memory cycle storage.
+	WorkingMemory *store.WorkingMemoryBuffer
+
+	// Legacy DB clients (kept for Phase 4 Neo4j+pgvector backend).
+	Neo4j    *neo4j.Client
+	Pgvector *pgvector.Client
+	Redis    *redis.Client
+	Minio    *minio.Client
+
+	WeightDecay       *core.WeightDecayEngine
+	SignificanceGate  *core.SignificanceGate
+	PatternSeparation *core.PatternSeparation
+	RetrievalEngine   *core.RetrievalEngine
+	Consolidation     *core.ConsolidationEngine
+	Embedder          embedder.Embedder
 }
 
 // New bootstraps the full application: config, databases, engines, and embedder.
@@ -40,6 +49,15 @@ func New(ctx context.Context) (*App, error) {
 	initCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
+	// Initialize the storage backend (v0.1.1 primary path).
+	s, err := NewMemoryStore(cfg.Store)
+	if err != nil {
+		return nil, err
+	}
+
+	wm := store.NewWorkingMemoryBuffer(20)
+
+	// Legacy DB clients (fault-tolerant, for Phase 4 backward compat).
 	neo4jClient, err := neo4j.NewClient(initCtx, cfg.Neo4j)
 	if err != nil {
 		slog.Warn("neo4j not available — continuing", "err", err)
@@ -91,6 +109,8 @@ func New(ctx context.Context) (*App, error) {
 
 	return &App{
 		Config:             cfg,
+		Store:              s,
+		WorkingMemory:      wm,
 		Neo4j:              neo4jClient,
 		Pgvector:           pgvectorClient,
 		Redis:              redisClient,
@@ -104,8 +124,13 @@ func New(ctx context.Context) (*App, error) {
 	}, nil
 }
 
-// Close shuts down all database connections.
+// Close shuts down all connections.
 func (a *App) Close() {
+	if a.Store != nil {
+		if err := a.Store.Close(); err != nil {
+			slog.Warn("error closing store", "err", err)
+		}
+	}
 	if a.Neo4j != nil {
 		if err := a.Neo4j.Close(context.Background()); err != nil {
 			slog.Warn("error closing neo4j", "err", err)
