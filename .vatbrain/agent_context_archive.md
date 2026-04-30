@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-04-29 — v0.1.1 Phase 3 完成
+
+- Engine 层 Adaption：ConsolidationEngine.Run()/LinkOnWrite 接受 MemoryStore 接口
+- API 层 6 handler 重写 + MCP 层 6 tool 重写
+- SQLite Store: INSERT OR REPLACE、WorkingMemoryBuffer 替换 Redis
+- 编译/测试全绿
+
+---
+
+## 2026-04-27 — Phase 4 MCP Server
+
+### 完成事项
+
+1. **共享初始化** (`internal/app/app.go`)
+   - `App` 结构体 + `New()` 构造函数，封装所有 DB/Engine 初始化
+   - `cmd/vatbrain/main.go` 简化为 ~25 行
+
+2. **MCP Server** (`internal/mcp/`)
+   - 6 个 MCP Tools：write_memory, search_memories, trigger_consolidation, get_memory_weight, touch_memory, health_check
+   - `mcp_server_test.go` — 8 个测试
+
+3. **MCP 入口** (`cmd/vatbrain-mcp/main.go`)
+
+### 关键决策
+- 工具注册重构为 `xxxTool(a *app.App) server.ServerTool`
+- DB nil 安全：health_check / trigger_consolidation 优雅降级
+- 测试包：`mcp_test` (外部包)
+
+### 测试结果：55 全通过，go vet 清洁
+
+---
+
 ## 2026-04-27 — Phase 3 API 层
 
 ### 完成事项

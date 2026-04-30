@@ -15,6 +15,8 @@ import (
 	"github.com/vatbrain/vatbrain/internal/db/pgvector"
 	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/models"
+	"github.com/vatbrain/vatbrain/internal/store"
+	"github.com/vatbrain/vatbrain/internal/store/neo4jpg"
 )
 
 // testEmbedder returns a deterministic short embedding for test control.
@@ -65,6 +67,9 @@ func TestE2E_WriteRetrieveDecayConsolidate(t *testing.T) {
 	require.NoError(t, err, "pgvector must be available")
 	defer pgClient.Close()
 
+	st, err := neo4jpg.NewStore(ctx, neo4jClient, pgClient)
+	require.NoError(t, err, "neo4jpg store setup")
+
 	projectID := "e2e_" + uuid.New().String()[:8]
 	t.Logf("project_id=%s", projectID)
 
@@ -72,40 +77,20 @@ func TestE2E_WriteRetrieveDecayConsolidate(t *testing.T) {
 	// Phase 1: WRITE — create episodic memories + embeddings
 	// ─────────────────────────────────────────────────────────────
 	type testMemory struct {
-		id       string
+		id       uuid.UUID
 		summary  string
-		taskType string
+		taskType models.TaskType
 		embed    []float32
 	}
 
 	// 3 debug memories (related) — will form a consolidation cluster.
 	// 2 feature memories (unrelated).
 	memories := []testMemory{
-		{
-			id:       uuid.New().String(),
-			summary:  "redis connection pool exhausted at maxconns=50 causing timeout",
-			taskType: "debug",
-		},
-		{
-			id:       uuid.New().String(),
-			summary:  "redis pool timeout when connecting to primary node after failover",
-			taskType: "debug",
-		},
-		{
-			id:       uuid.New().String(),
-			summary:  "redis connection leak in healthcheck goroutine depleting pool",
-			taskType: "debug",
-		},
-		{
-			id:       uuid.New().String(),
-			summary:  "added user authentication middleware with JWT validation",
-			taskType: "feature",
-		},
-		{
-			id:       uuid.New().String(),
-			summary:  "refactored config loader to support YAML and env vars",
-			taskType: "feature",
-		},
+		{id: uuid.New(), summary: "redis connection pool exhausted at maxconns=50 causing timeout", taskType: models.TaskTypeDebug},
+		{id: uuid.New(), summary: "redis pool timeout when connecting to primary node after failover", taskType: models.TaskTypeDebug},
+		{id: uuid.New(), summary: "redis connection leak in healthcheck goroutine depleting pool", taskType: models.TaskTypeDebug},
+		{id: uuid.New(), summary: "added user authentication middleware with JWT validation", taskType: models.TaskTypeFeature},
+		{id: uuid.New(), summary: "refactored config loader to support YAML and env vars", taskType: models.TaskTypeFeature},
 	}
 
 	emb := &testEmbedder{dim: 1536}
@@ -113,146 +98,59 @@ func TestE2E_WriteRetrieveDecayConsolidate(t *testing.T) {
 	decay := core.DefaultWeightDecayEngine()
 
 	for i, m := range memories {
-		// Generate deterministic embedding.
 		vec, err := emb.Embed(ctx, m.summary)
 		require.NoError(t, err)
 		memories[i].embed = vec
 
 		effFreq, weight := decay.ComputeFull([]time.Time{now}, now, now)
 
-		_, err = neo4jClient.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
-			_, runErr := tx.Run(ctx, `
-				CREATE (e:EpisodicMemory {
-					id: $id,
-					project_id: $projectID,
-					language: $language,
-					task_type: $taskType,
-					summary: $summary,
-					source_type: $sourceType,
-					trust_level: $trustLevel,
-					weight: $weight,
-					effective_frequency: $effFreq,
-					created_at: datetime(),
-					entity_group: $entityGroup,
-					embedding_id: $embeddingID
-				})
-			`, map[string]any{
-				"id":          m.id,
-				"projectID":   projectID,
-				"language":    "go",
-				"taskType":    m.taskType,
-				"summary":     m.summary,
-				"sourceType":  string(models.SourceTypeLLM),
-				"trustLevel":  int(models.DefaultTrustLevel),
-				"weight":      weight,
-				"effFreq":     effFreq,
-				"entityGroup": "test",
-				"embeddingID": m.id,
-			})
-			return nil, runErr
+		err = st.WriteEpisodic(ctx, &models.EpisodicMemory{
+			ID:                 m.id,
+			ProjectID:          projectID,
+			Language:           "go",
+			TaskType:           m.taskType,
+			Summary:            m.summary,
+			SourceType:         models.SourceTypeLLM,
+			TrustLevel:         models.DefaultTrustLevel,
+			Weight:             weight,
+			EffectiveFrequency: effFreq,
+			CreatedAt:          now,
+			EntityGroup:        "test",
+			EmbeddingID:        m.id.String(),
+			ContextVector:      vec,
 		})
-		require.NoError(t, err, "create episodic memory %d", i)
-		t.Logf("created memory %s", m.id[:8])
-
-		// Insert embedding.
-		err = pgClient.InsertEmbedding(ctx, m.id, vec, m.summary,
-			projectID, "go", m.taskType,
-			map[string]any{"entity_id": "test"})
-		require.NoError(t, err, "insert embedding %d", i)
+		require.NoError(t, err, "write episodic memory %d", i)
+		t.Logf("created memory %s", m.id.String()[:8])
 	}
-	t.Logf("Phase 1 WRITE: %d memories created", len(memories))
+	t.Logf("Phase 1 WRITE: %d memories created via Store", len(memories))
 
-	// Verify all nodes exist.
+	// Verify all nodes exist via Store.
 	for _, m := range memories {
-		raw, err := neo4jClient.ExecuteRead(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
-			records, runErr := tx.Run(ctx,
-				`MATCH (e:EpisodicMemory {id: $id}) RETURN e.summary AS summary`,
-				map[string]any{"id": m.id})
-			if runErr != nil {
-				return nil, runErr
-			}
-			if !records.Next(ctx) {
-				return nil, records.Err()
-			}
-			r := records.Record()
-			s, _, _ := neodriver.GetRecordValue[string](r, "summary")
-			return s, nil
-		})
+		got, err := st.GetEpisodic(ctx, m.id)
 		require.NoError(t, err)
-		assert.Equal(t, m.summary, raw)
+		assert.Equal(t, m.summary, got.Summary)
 	}
 
 	// ─────────────────────────────────────────────────────────────
-	// Phase 2: LINK ON WRITE — create RELATES_TO edges
-	// TODO(v0.1.1): Update to use Store interface once Neo4j Store adapter (Phase 4) is done.
+	// Phase 2: LINK ON WRITE — create RELATES_TO edges via Store
 	// ─────────────────────────────────────────────────────────────
-	_ = core.LinkOnWrite
-	t.Log("Phase 2 LINK: skipped — requires Neo4j Store adapter (Phase 4)")
+	for _, m := range memories {
+		core.LinkOnWrite(ctx, st, m.id, m.summary, projectID)
+	}
+	t.Log("Phase 2 LINK: complete — RELATES_TO edges created via Store")
 
 	// ─────────────────────────────────────────────────────────────
-	// Phase 3: RETRIEVE — 2-stage pipeline
+	// Phase 3: RETRIEVE — 2-stage pipeline via Store
 	// ─────────────────────────────────────────────────────────────
 	_ = core.DefaultRetrievalEngine() // exercised indirectly below
 
-	// Fetch episodic candidates (mimics fetchEpisodicCandidates).
-	raw, err := neo4jClient.ExecuteRead(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
-		records, runErr := tx.Run(ctx, `
-			MATCH (e:EpisodicMemory)
-			WHERE e.project_id = $projectID AND e.language = $language
-			  AND e.obsoleted_at IS NULL
-			RETURN e.id, e.project_id, e.language, e.task_type, e.summary,
-			       e.source_type, e.trust_level, e.weight, e.effective_frequency,
-			       e.created_at, e.last_accessed_at, e.obsoleted_at,
-			       e.entity_group, e.embedding_id
-			ORDER BY e.weight DESC LIMIT 500
-		`, map[string]any{"projectID": projectID, "language": "go"})
-		if runErr != nil {
-			return nil, runErr
-		}
-		var results []models.EpisodicMemory
-		for records.Next(ctx) {
-			r := records.Record()
-			id, _, _ := neodriver.GetRecordValue[string](r, "e.id")
-			if id == "" {
-				continue
-			}
-			pid, _ := uuid.Parse(id)
-			projID, _, _ := neodriver.GetRecordValue[string](r, "e.project_id")
-			lang, _, _ := neodriver.GetRecordValue[string](r, "e.language")
-			taskType, _, _ := neodriver.GetRecordValue[string](r, "e.task_type")
-			summary, _, _ := neodriver.GetRecordValue[string](r, "e.summary")
-			sourceType, _, _ := neodriver.GetRecordValue[string](r, "e.source_type")
-			trustLevel, _, _ := neodriver.GetRecordValue[int64](r, "e.trust_level")
-			weight, _, _ := neodriver.GetRecordValue[float64](r, "e.weight")
-			effFreq, _, _ := neodriver.GetRecordValue[float64](r, "e.effective_frequency")
-			createdAt, _, _ := neodriver.GetRecordValue[time.Time](r, "e.created_at")
-			lastAccessedAt, laIsNil, _ := neodriver.GetRecordValue[time.Time](r, "e.last_accessed_at")
-			entityGroup, _, _ := neodriver.GetRecordValue[string](r, "e.entity_group")
-			embeddingID, _, _ := neodriver.GetRecordValue[string](r, "e.embedding_id")
-
-			m := models.EpisodicMemory{
-				ID:                 pid,
-				ProjectID:          projID,
-				Language:           lang,
-				TaskType:           models.TaskType(taskType),
-				Summary:            summary,
-				SourceType:         models.SourceType(sourceType),
-				TrustLevel:         models.TrustLevel(trustLevel),
-				Weight:             weight,
-				EffectiveFrequency: effFreq,
-				CreatedAt:          createdAt,
-				EntityGroup:        entityGroup,
-				EmbeddingID:        embeddingID,
-			}
-			if !laIsNil {
-				m.LastAccessedAt = &lastAccessedAt
-			}
-			results = append(results, m)
-		}
-		return results, records.Err()
+	// Fetch episodic candidates via Store.
+	candidates, err := st.SearchEpisodic(ctx, store.EpisodicSearchRequest{
+		ProjectID: projectID,
+		Language:  "go",
+		Limit:     500,
 	})
 	require.NoError(t, err)
-	candidates := raw.([]models.EpisodicMemory)
 	require.Len(t, candidates, 5, "all 5 episodics should match project+language")
 
 	// Stage 1: Contextual Gating.
@@ -337,34 +235,50 @@ func TestE2E_WriteRetrieveDecayConsolidate(t *testing.T) {
 		"weight formula should match manual computation")
 
 	// ─────────────────────────────────────────────────────────────
-	// Phase 5: CONSOLIDATE — cluster episodics → semantic memories
+	// Phase 5: CONSOLIDATE — cluster episodics → semantic memories via Store
 	// ─────────────────────────────────────────────────────────────
 	engine2 := core.DefaultConsolidationEngine()
-	engine2.HoursToScan = 24 // scan last 24 hours (our memories are just created)
+	engine2.HoursToScan = 24
 	engine2.MinClusterSize = 3
 	engine2.AccuracyThreshold = 0.7
 
-	_ = engine2
-	_ = emb
-	t.Log("Phase 5 CONSOLIDATE: skipped — requires Store adapter (Phase 4)")
+	result, err := engine2.Run(ctx, st, emb)
+	require.NoError(t, err)
+	t.Logf("Phase 5 CONSOLIDATE: scanned=%d, rules=%d, persisted=%d, avgAcc=%.2f",
+		result.EpisodicsScanned, result.CandidateRulesFound,
+		result.RulesPersisted, result.AverageAccuracy)
+	assert.GreaterOrEqual(t, result.EpisodicsScanned, 3,
+		"should scan at least 3 debug episodics")
+	assert.GreaterOrEqual(t, result.RulesPersisted, 1,
+		"should persist at least 1 semantic rule from the debug cluster")
 
 	// ─────────────────────────────────────────────────────────────
 	// CLEANUP
 	// ─────────────────────────────────────────────────────────────
-	// Cleanup semantic memories (deleted via direct neo4j in Phase 5 previously; skip).
-	_ = neo4jClient
+	// Delete semantic memories (created by consolidation).
+	_, _ = neo4jClient.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
+		_, _ = tx.Run(ctx,
+			`MATCH (m:SemanticMemory) DETACH DELETE m`, nil)
+		return nil, nil
+	})
+	_, _ = neo4jClient.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
+		_, _ = tx.Run(ctx,
+			`MATCH (c:ConsolidationRun) DETACH DELETE c`, nil)
+		return nil, nil
+	})
 
 	// Delete episodic memories.
 	for _, m := range memories {
+		mid := m.id.String()
 		_, _ = neo4jClient.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
 			_, _ = tx.Run(ctx,
 				`MATCH (e:EpisodicMemory {id: $id}) DETACH DELETE e`,
-				map[string]any{"id": m.id})
+				map[string]any{"id": mid})
 			return nil, nil
 		})
-		err := pgClient.DeleteByMemoryID(ctx, m.id)
+		err := pgClient.DeleteByMemoryID(ctx, mid)
 		if err != nil {
-			t.Logf("cleanup pgvector %s: %v", m.id[:8], err)
+			t.Logf("cleanup pgvector %s: %v", mid[:8], err)
 		}
 	}
 

@@ -5,6 +5,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -33,6 +34,10 @@ type App struct {
 	Redis    *redis.Client
 	Minio    *minio.Client
 
+	// storeOwnsDB is true when the Store (neo4j+pgvector backend) owns Neo4j
+	// and pgvector clients. In that case App.Close must not double-close them.
+	storeOwnsDB bool
+
 	WeightDecay       *core.WeightDecayEngine
 	SignificanceGate  *core.SignificanceGate
 	PatternSeparation *core.PatternSeparation
@@ -42,30 +47,51 @@ type App struct {
 }
 
 // New bootstraps the full application: config, databases, engines, and embedder.
-// Missing databases are logged as warnings but do not prevent startup.
+// Missing databases are logged as warnings but do not prevent startup
+// (except neo4j+pgvector backend, where they are required).
 func New(ctx context.Context) (*App, error) {
 	cfg := config.LoadFromEnv()
 
 	initCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	// Initialize the storage backend (v0.1.1 primary path).
-	s, err := NewMemoryStore(cfg.Store)
-	if err != nil {
-		return nil, err
+	var storeOwnsDB bool
+
+	// For neo4j+pgvector backend: create DB clients first (required), then
+	// pass them to the store factory.
+	var neo4jClient *neo4j.Client
+	var pgvectorClient *pgvector.Client
+
+	if cfg.Store.Backend == "neo4j+pgvector" {
+		var err error
+		neo4jClient, err = neo4j.NewClient(initCtx, cfg.Neo4j)
+		if err != nil {
+			return nil, fmt.Errorf("neo4j required for %s backend: %w", cfg.Store.Backend, err)
+		}
+		pgvectorClient, err = pgvector.NewClient(initCtx, cfg.Pgvector)
+		if err != nil {
+			return nil, fmt.Errorf("pgvector required for %s backend: %w", cfg.Store.Backend, err)
+		}
+		storeOwnsDB = true
+	} else {
+		// Legacy DB clients (fault-tolerant, for backward compat).
+		var err error
+		neo4jClient, err = neo4j.NewClient(initCtx, cfg.Neo4j)
+		if err != nil {
+			slog.Warn("neo4j not available — continuing", "err", err)
+		}
+		pgvectorClient, err = pgvector.NewClient(initCtx, cfg.Pgvector)
+		if err != nil {
+			slog.Warn("pgvector not available — continuing", "err", err)
+		}
 	}
 
 	wm := store.NewWorkingMemoryBuffer(20)
 
-	// Legacy DB clients (fault-tolerant, for Phase 4 backward compat).
-	neo4jClient, err := neo4j.NewClient(initCtx, cfg.Neo4j)
+	// Initialize the storage backend (v0.1.1 primary path).
+	s, err := NewMemoryStore(cfg.Store, neo4jClient, pgvectorClient)
 	if err != nil {
-		slog.Warn("neo4j not available — continuing", "err", err)
-	}
-
-	pgvectorClient, err := pgvector.NewClient(initCtx, cfg.Pgvector)
-	if err != nil {
-		slog.Warn("pgvector not available — continuing", "err", err)
+		return nil, err
 	}
 
 	redisClient, err := redis.NewClient(initCtx, cfg.Redis)
@@ -115,6 +141,7 @@ func New(ctx context.Context) (*App, error) {
 		Pgvector:           pgvectorClient,
 		Redis:              redisClient,
 		Minio:              minioClient,
+		storeOwnsDB:        storeOwnsDB,
 		WeightDecay:        weightDecay,
 		SignificanceGate:   significanceGate,
 		PatternSeparation:  patternSeparation,
@@ -131,13 +158,17 @@ func (a *App) Close() {
 			slog.Warn("error closing store", "err", err)
 		}
 	}
-	if a.Neo4j != nil {
-		if err := a.Neo4j.Close(context.Background()); err != nil {
-			slog.Warn("error closing neo4j", "err", err)
+	// When the store owns Neo4j/pgvector (neo4j+pgvector backend), skip
+	// individual close to avoid double-free.
+	if !a.storeOwnsDB {
+		if a.Neo4j != nil {
+			if err := a.Neo4j.Close(context.Background()); err != nil {
+				slog.Warn("error closing neo4j", "err", err)
+			}
 		}
-	}
-	if a.Pgvector != nil {
-		a.Pgvector.Close()
+		if a.Pgvector != nil {
+			a.Pgvector.Close()
+		}
 	}
 	if a.Redis != nil {
 		if err := a.Redis.Close(); err != nil {

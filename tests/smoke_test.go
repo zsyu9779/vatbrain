@@ -12,6 +12,8 @@ import (
 	"github.com/vatbrain/vatbrain/internal/core"
 	"github.com/vatbrain/vatbrain/internal/db/neo4j"
 	"github.com/vatbrain/vatbrain/internal/db/pgvector"
+	"github.com/vatbrain/vatbrain/internal/models"
+	"github.com/vatbrain/vatbrain/internal/store/neo4jpg"
 )
 
 func TestSmoke_Neo4j_WriteRead(t *testing.T) {
@@ -132,41 +134,54 @@ func TestSmoke_LinkOnWrite(t *testing.T) {
 	require.NoError(t, err)
 	defer neo4jClient.Close(ctx)
 
+	pgClient, err := pgvector.NewClient(ctx, pgvector.Config{
+		Host: "localhost", Port: 5432, User: "vatbrain", Password: "vatbrain",
+		Database: "vatbrain", MaxConns: 5,
+	})
+	require.NoError(t, err)
+	defer pgClient.Close()
+
+	store, err := neo4jpg.NewStore(ctx, neo4jClient, pgClient)
+	require.NoError(t, err)
+
 	projectID := "smoketest_link"
+	now := time.Now().UTC()
 
-	// Create two related memories.
-	mem1 := uuid.New().String()
-	mem2 := uuid.New().String()
+	// Create two related memories via Store.
+	mem1ID := uuid.New()
+	mem2ID := uuid.New()
+	summaries := []string{
+		"redis connection pool exhausted at maxconns=50 causing timeout",
+		"redis pool timeout when connecting to primary node",
+	}
+	ids := []uuid.UUID{mem1ID, mem2ID}
 
-	for _, m := range []struct {
-		id, summary string
-	}{
-		{mem1, "redis connection pool exhausted at maxconns=50 causing timeout"},
-		{mem2, "redis pool timeout when connecting to primary node"},
-	} {
-		_, err = neo4jClient.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
-			_, runErr := tx.Run(ctx, `
-				CREATE (e:EpisodicMemory {
-					id: $id, project_id: $pid, language: 'go',
-					summary: $summary, weight: 1.0, created_at: datetime()
-				})
-			`, map[string]any{"id": m.id, "pid": projectID, "summary": m.summary})
-			return nil, runErr
+	for i, mID := range ids {
+		err = store.WriteEpisodic(ctx, &models.EpisodicMemory{
+			ID:        mID,
+			ProjectID: projectID,
+			Language:  "go",
+			Summary:   summaries[i],
+			Weight:    1.0,
+			CreatedAt: now,
 		})
 		require.NoError(t, err)
 	}
 
-	// TODO(v0.1.1): Update LinkOnWrite smoke test to use Store interface
-	// once the Neo4j+pgvector Store adapter (Phase 4) is implemented.
-	_ = core.LinkOnWrite
-	_ = mem1
-	_ = mem2
+	// Trigger LinkOnWrite.
+	core.LinkOnWrite(ctx, store, mem1ID, summaries[0], projectID)
+
+	// Verify RELATES_TO edge was created.
+	edges, err := store.GetEdges(ctx, mem1ID, "RELATES_TO", "out")
+	require.NoError(t, err)
+	assert.Len(t, edges, 1, "LinkOnWrite should create 1 RELATES_TO edge")
+	assert.Equal(t, mem2ID, edges[0].ToID)
 
 	// Cleanup
-	for _, mID := range []string{mem1, mem2} {
+	for _, mID := range ids {
 		_, _ = neo4jClient.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
 			_, runErr := tx.Run(ctx,
-				`MATCH (e:EpisodicMemory {id: $id}) DETACH DELETE e`, map[string]any{"id": mID})
+				`MATCH (e:EpisodicMemory {id: $id}) DETACH DELETE e`, map[string]any{"id": mID.String()})
 			return nil, runErr
 		})
 	}
