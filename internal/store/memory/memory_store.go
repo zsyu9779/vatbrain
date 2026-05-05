@@ -17,11 +17,13 @@ import (
 
 // Store implements store.MemoryStore entirely in-process.
 type Store struct {
-	mu        sync.RWMutex
-	episodics map[uuid.UUID]*models.EpisodicMemory
-	semantics map[uuid.UUID]*models.SemanticMemory
-	edges     []store.Edge
-	consRuns  map[uuid.UUID]*models.ConsolidationRunResult
+	mu           sync.RWMutex
+	episodics    map[uuid.UUID]*models.EpisodicMemory
+	semantics    map[uuid.UUID]*models.SemanticMemory
+	pitfalls     map[uuid.UUID]*models.PitfallMemory
+	edges        []store.Edge
+	pitfallEdges []store.Edge
+	consRuns     map[uuid.UUID]*models.ConsolidationRunResult
 }
 
 // NewStore creates a new in-memory store.
@@ -29,6 +31,7 @@ func NewStore() *Store {
 	return &Store{
 		episodics: make(map[uuid.UUID]*models.EpisodicMemory),
 		semantics: make(map[uuid.UUID]*models.SemanticMemory),
+		pitfalls:  make(map[uuid.UUID]*models.PitfallMemory),
 		consRuns:  make(map[uuid.UUID]*models.ConsolidationRunResult),
 	}
 }
@@ -289,6 +292,7 @@ func (s *Store) ScanRecent(_ context.Context, since time.Time, limit int) ([]sto
 			ProjectID:    m.ProjectID,
 			Language:     m.Language,
 			EntityGroup:  m.EntityGroup,
+			EntityID:     m.EntityGroup,
 			Weight:       m.Weight,
 			LastAccessed: la,
 		})

@@ -65,8 +65,49 @@ CREATE TABLE IF NOT EXISTS consolidation_runs (
     episodics_scanned INTEGER DEFAULT 0,
     candidate_rules_found INTEGER DEFAULT 0,
     rules_persisted INTEGER DEFAULT 0,
-    average_accuracy REAL DEFAULT 0.0
+    average_accuracy REAL DEFAULT 0.0,
+    pitfalls_extracted INTEGER DEFAULT 0,
+    pitfalls_merged INTEGER DEFAULT 0,
+    pitfalls_persisted INTEGER DEFAULT 0,
+    rules_error TEXT DEFAULT '',
+    pitfall_error TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS pitfall_memories (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('FUNCTION','MODULE','API','CONFIG','QUERY')),
+    project_id TEXT NOT NULL,
+    language TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    signature_embedding BLOB,
+    root_cause_category TEXT NOT NULL CHECK (root_cause_category IN ('CONCURRENCY','RESOURCE_EXHAUSTION','CONFIG','CONTRACT_VIOLATION','LOGIC_ERROR','UNKNOWN')),
+    fix_strategy TEXT NOT NULL DEFAULT '',
+    was_user_corrected INTEGER NOT NULL DEFAULT 0,
+    occurrence_count INTEGER NOT NULL DEFAULT 1,
+    last_occurred_at TEXT,
+    source_type TEXT NOT NULL,
+    trust_level INTEGER NOT NULL DEFAULT 3 CHECK (trust_level BETWEEN 1 AND 5),
+    weight REAL NOT NULL DEFAULT 1.0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    obsoleted_at TEXT,
+    source_episodic_ids TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_pitfall_entity ON pitfall_memories(entity_id, project_id);
+CREATE INDEX IF NOT EXISTS idx_pitfall_project ON pitfall_memories(project_id, language);
+CREATE INDEX IF NOT EXISTS idx_pitfall_weight ON pitfall_memories(weight DESC);
+
+CREATE TABLE IF NOT EXISTS pitfall_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_id TEXT NOT NULL,
+    to_id TEXT NOT NULL,
+    edge_type TEXT NOT NULL,
+    properties TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pitfall_edges_from ON pitfall_edges(from_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_pitfall_edges_to ON pitfall_edges(to_id, edge_type);
 `
 
 func migrate(db *sql.DB) error {

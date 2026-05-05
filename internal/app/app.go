@@ -16,6 +16,7 @@ import (
 	"github.com/vatbrain/vatbrain/internal/db/pgvector"
 	"github.com/vatbrain/vatbrain/internal/db/redis"
 	"github.com/vatbrain/vatbrain/internal/embedder"
+	"github.com/vatbrain/vatbrain/internal/llm"
 	"github.com/vatbrain/vatbrain/internal/store"
 )
 
@@ -44,6 +45,7 @@ type App struct {
 	RetrievalEngine   *core.RetrievalEngine
 	Consolidation     *core.ConsolidationEngine
 	Embedder          embedder.Embedder
+	LLM               llm.Client // v0.2: LLM client for rule/pitfall extraction
 }
 
 // New bootstraps the full application: config, databases, engines, and embedder.
@@ -131,7 +133,20 @@ func New(ctx context.Context) (*App, error) {
 		consolidation.AccuracyThreshold = cfg.Consolidation.AccuracyThreshold
 	}
 
-	emb := embedder.NewStubEmbedder()
+	// Embedder: use Claude if API key is set, otherwise fall back to stub.
+	var emb embedder.Embedder
+	if cfg.LLM.APIKey != "" {
+		emb = embedder.NewClaudeEmbedder(cfg.LLM.APIKey, cfg.LLM.BaseURL, "")
+	} else {
+		emb = embedder.NewStubEmbedder()
+	}
+
+	// LLM client for consolidation rule/pitfall extraction.
+	var llmClient llm.Client
+	if cfg.LLM.APIKey != "" {
+		llmClient = llm.NewClaudeClient(cfg.LLM.APIKey, cfg.LLM.BaseURL, cfg.LLM.Model)
+	}
+	consolidation.LLMClient = llmClient
 
 	return &App{
 		Config:             cfg,
@@ -148,6 +163,7 @@ func New(ctx context.Context) (*App, error) {
 		RetrievalEngine:    retrievalEngine,
 		Consolidation:      consolidation,
 		Embedder:           emb,
+		LLM:                llmClient,
 	}, nil
 }
 

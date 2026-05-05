@@ -39,11 +39,21 @@ type Config struct {
 	PatternSeparation PatternSeparationConfig
 	Retrieval         RetrievalConfig
 	Consolidation     ConsolidationConfig
+	PitfallDecay      PitfallDecayConfig
 	Scheduler         SchedulerConfig
+	LLM               LLMConfig
 }
 
 // WeightDecayConfig holds tunable parameters for the weight decay engine.
 type WeightDecayConfig struct {
+	LambdaDecay      float64
+	AlphaExperience  float64
+	BetaActivity     float64
+	CoolingThreshold float64
+}
+
+// PitfallDecayConfig holds tunable parameters specific to PitfallMemory decay.
+type PitfallDecayConfig struct {
 	LambdaDecay      float64
 	AlphaExperience  float64
 	BetaActivity     float64
@@ -79,6 +89,13 @@ type SchedulerConfig struct {
 	// ConsolidationCron is the cron expression for the daily consolidation job.
 	// Default "0 3 * * *" (3 AM daily).
 	ConsolidationCron string
+}
+
+// LLMConfig holds configuration for LLM API access (Claude).
+type LLMConfig struct {
+	APIKey  string
+	BaseURL string
+	Model   string // Messages API model, default "claude-sonnet-4-6-20250501"
 }
 
 // LoadFromEnv reads configuration from environment variables with defaults.
@@ -151,9 +168,22 @@ func LoadFromEnv() Config {
 			AccuracyThreshold: envFloat("CONSOLIDATION_ACCURACY_THRESHOLD", 0.7),
 		},
 
+			PitfallDecay: PitfallDecayConfig{
+				LambdaDecay:      envFloat("PITFALL_LAMBDA_DECAY", 0.15),
+				AlphaExperience:  envFloat("PITFALL_ALPHA_EXPERIENCE", 0.008),
+				BetaActivity:     envFloat("PITFALL_BETA_ACTIVITY", 0.03),
+				CoolingThreshold: envFloat("PITFALL_COOLING_THRESHOLD", 0.005),
+			},
+
 		Scheduler: SchedulerConfig{
 			Enabled:           envBool("SCHEDULER_ENABLED", true),
 			ConsolidationCron: envStr("SCHEDULER_CONSOLIDATION_CRON", "0 3 * * *"),
+		},
+
+		LLM: LLMConfig{
+			APIKey:  envStr("ANTHROPIC_API_KEY", ""),
+			BaseURL: envStr("ANTHROPIC_BASE_URL", ""),
+			Model:   envStr("ANTHROPIC_MODEL", "claude-sonnet-4-6-20250501"),
 		},
 	}
 }

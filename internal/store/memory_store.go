@@ -39,6 +39,20 @@ type SemanticSearchRequest struct {
 	Embedding []float64
 }
 
+// PitfallSearchRequest carries filters and an optional signature embedding for
+// PitfallMemory retrieval. Implements dual-key matching: when both EntityID and
+// Embedding are set, the query requires entity_id exact match AND signature
+// embedding similarity > 0.7 (AND semantics).
+type PitfallSearchRequest struct {
+	ProjectID        string
+	Language         string
+	EntityID         string
+	RootCauseCategory models.RootCause
+	MinWeight        float64
+	Limit            int
+	Embedding        []float64 // key2: signature embedding (AND with EntityID key1)
+}
+
 // ── Return Types ────────────────────────────────────────────────────────────────
 
 // EpisodicScanItem is a lightweight projection returned by ScanRecent, owned by
@@ -50,6 +64,7 @@ type EpisodicScanItem struct {
 	ProjectID    string
 	Language     string
 	EntityGroup  string
+	EntityID     string // v0.2: code entity anchor for Pitfall clustering
 	Weight       float64
 	LastAccessed time.Time
 }
@@ -90,6 +105,20 @@ type MemoryStore interface {
 	ScanRecent(ctx context.Context, since time.Time, limit int) ([]EpisodicScanItem, error)
 	SaveConsolidationRun(ctx context.Context, run *models.ConsolidationRunResult) error
 	GetConsolidationRun(ctx context.Context, runID uuid.UUID) (*models.ConsolidationRunResult, error)
+
+	// ── Pitfall Memory ───────────────────────────────────────────
+	WritePitfall(ctx context.Context, p *models.PitfallMemory) error
+	SearchPitfall(ctx context.Context, req PitfallSearchRequest) ([]models.PitfallMemory, error)
+	GetPitfall(ctx context.Context, id uuid.UUID) (*models.PitfallMemory, error)
+	TouchPitfall(ctx context.Context, id uuid.UUID, now time.Time) error
+	UpdatePitfallWeight(ctx context.Context, id uuid.UUID, weight float64) error
+	MarkPitfallObsolete(ctx context.Context, id uuid.UUID, at time.Time) error
+
+	// SearchPitfallByEntity finds all Pitfalls anchored on a specific entity.
+	SearchPitfallByEntity(ctx context.Context, entityID, projectID string) ([]models.PitfallMemory, error)
+
+	// UpdateSemanticWeight updates the weight and effective frequency of a semantic memory.
+	UpdateSemanticWeight(ctx context.Context, id uuid.UUID, weight, effFreq float64) error
 
 	// ── Lifecycle ───────────────────────────────────────────────────
 	HealthCheck(ctx context.Context) error

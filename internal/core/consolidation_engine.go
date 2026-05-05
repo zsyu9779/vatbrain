@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vatbrain/vatbrain/internal/embedder"
+	"github.com/vatbrain/vatbrain/internal/llm"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
 )
@@ -23,6 +24,7 @@ type ConsolidationEngine struct {
 	HoursToScan       float64
 	MinClusterSize    int
 	AccuracyThreshold float64
+	LLMClient         llm.Client // v0.2: nil = degrade to v0.1 string-concat extraction
 }
 
 // DefaultConsolidationEngine returns a ConsolidationEngine with v0.1 tuned defaults.
@@ -77,8 +79,8 @@ func (e *ConsolidationEngine) Run(
 
 	// Phase 3-5: Extract → Backtest → Persist.
 	for _, cl := range clusters {
-		ruleContent := extractRule(cl)
-		accuracy := backtest(cl, e.MinClusterSize)
+		ruleContent := e.extractRule(ctx, cl)
+		accuracy := e.backtest(ctx, cl)
 
 		if accuracy < e.AccuracyThreshold {
 			continue
@@ -160,10 +162,21 @@ func clusterByPattern(episodics []store.EpisodicScanItem, minSize int) []Pattern
 	return clusters
 }
 
-// extractRule builds a candidate rule from a cluster of episodic memories.
-// v0.1 concatenates summaries; future versions will call an LLM to distill
-// a pattern.
-func extractRule(cl PatternCluster) string {
+// extractRule builds a candidate rule from a cluster. If an LLM client is
+// configured, it calls the LLM to distill a pattern; otherwise it falls back
+// to v0.1 string concatenation.
+func (e *ConsolidationEngine) extractRule(ctx context.Context, cl PatternCluster) string {
+	if e.LLMClient != nil {
+		systemPrompt := "You are a knowledge extraction engine. Given a set of episodic memories about the same project and task type, extract a concise, reusable rule or pattern. Output only the rule text, no markdown formatting."
+		userPrompt := fmt.Sprintf("Project: %s | TaskType: %s\n\nMemories:\n", cl.ProjectID, cl.TaskType)
+		for i, ep := range cl.Episodics {
+			userPrompt += fmt.Sprintf("[%d] %s\n", i, ep.Summary)
+		}
+		if rule, err := e.LLMClient.Chat(ctx, systemPrompt, userPrompt); err == nil {
+			return rule
+		}
+	}
+	// Fallback: v0.1 string concatenation.
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("Pattern in %s/%s:\n", cl.ProjectID, cl.TaskType))
 	for i, ep := range cl.Episodics {
@@ -176,11 +189,34 @@ func extractRule(cl PatternCluster) string {
 	return b.String()
 }
 
-// backtest evaluates a candidate rule against its source episodics.
-// v0.1 returns 1.0 if the cluster meets the minimum size; a real implementation
-// would test the rule against held-out recent episodics.
-func backtest(cl PatternCluster, minSize int) float64 {
-	if len(cl.Episodics) >= minSize {
+// backtest evaluates a candidate rule. If an LLM client is configured, it
+// samples up to 20 held-out episodics and asks the LLM to verify the rule;
+// otherwise returns 1.0 if the cluster meets the minimum size.
+func (e *ConsolidationEngine) backtest(ctx context.Context, cl PatternCluster) float64 {
+	if e.LLMClient != nil {
+		sampleSize := len(cl.Episodics)
+		if sampleSize > 20 {
+			sampleSize = 20
+		}
+		if sampleSize < 3 {
+			return 0.0
+		}
+		systemPrompt := "You are a rule validator. Given a candidate rule and a set of episodic memories, rate how well the rule describes the pattern on a scale from 0.0 to 1.0. Output ONLY the numeric score."
+		userPrompt := fmt.Sprintf("Rule: %s\n\nEpisodic memories:\n", e.extractRule(ctx, cl))
+		for i := 0; i < sampleSize; i++ {
+			userPrompt += fmt.Sprintf("[%d] %s\n", i, cl.Episodics[i].Summary)
+		}
+		if resp, err := e.LLMClient.Chat(ctx, systemPrompt, userPrompt); err == nil {
+			var score float64
+			if _, scanErr := fmt.Sscanf(strings.TrimSpace(resp), "%f", &score); scanErr == nil {
+				if score >= 0 && score <= 1 {
+					return score
+				}
+			}
+		}
+	}
+	// Fallback: v0.1 min-size check.
+	if len(cl.Episodics) >= e.MinClusterSize {
 		return 1.0
 	}
 	return 0.0

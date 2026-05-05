@@ -76,6 +76,7 @@ func TestClusterByPattern_MultipleClusters(t *testing.T) {
 }
 
 func TestExtractRule_ProducesContent(t *testing.T) {
+	e := &ConsolidationEngine{}
 	cl := PatternCluster{
 		ProjectID: "test-proj",
 		TaskType:  models.TaskTypeDebug,
@@ -85,13 +86,14 @@ func TestExtractRule_ProducesContent(t *testing.T) {
 		},
 	}
 
-	rule := extractRule(cl)
+	rule := e.extractRule(t.Context(), cl)
 	assert.Contains(t, rule, "test-proj/debug")
 	assert.Contains(t, rule, "nil pointer in handler")
 	assert.True(t, strings.Count(rule, "\n") >= 1)
 }
 
 func TestExtractRule_SingleEpisodic(t *testing.T) {
+	e := &ConsolidationEngine{}
 	cl := PatternCluster{
 		ProjectID: "solo",
 		TaskType:  models.TaskTypeRefactor,
@@ -100,29 +102,32 @@ func TestExtractRule_SingleEpisodic(t *testing.T) {
 		},
 	}
 
-	rule := extractRule(cl)
+	rule := e.extractRule(t.Context(), cl)
 	assert.Contains(t, rule, "one event")
 }
 
 func TestBacktest_SufficientSize(t *testing.T) {
+	e := &ConsolidationEngine{MinClusterSize: 3}
 	cl := PatternCluster{
 		Episodics: make([]store.EpisodicScanItem, 5),
 	}
-	assert.Equal(t, 1.0, backtest(cl, 3))
+	assert.Equal(t, 1.0, e.backtest(t.Context(), cl))
 }
 
 func TestBacktest_InsufficientSize(t *testing.T) {
+	e := &ConsolidationEngine{MinClusterSize: 3}
 	cl := PatternCluster{
 		Episodics: make([]store.EpisodicScanItem, 2),
 	}
-	assert.Equal(t, 0.0, backtest(cl, 3))
+	assert.Equal(t, 0.0, e.backtest(t.Context(), cl))
 }
 
 func TestBacktest_ExactlyMinSize(t *testing.T) {
+	e := &ConsolidationEngine{MinClusterSize: 3}
 	cl := PatternCluster{
 		Episodics: make([]store.EpisodicScanItem, 3),
 	}
-	assert.Equal(t, 1.0, backtest(cl, 3))
+	assert.Equal(t, 1.0, e.backtest(t.Context(), cl))
 }
 
 func TestDefaultConsolidationEngine(t *testing.T) {

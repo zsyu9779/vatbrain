@@ -40,6 +40,7 @@ func (s *Store) setupSchema(ctx context.Context) error {
 	constraints := []string{
 		"CREATE CONSTRAINT IF NOT EXISTS FOR (e:EpisodicMemory) REQUIRE e.id IS UNIQUE",
 		"CREATE CONSTRAINT IF NOT EXISTS FOR (m:SemanticMemory) REQUIRE m.id IS UNIQUE",
+			"CREATE CONSTRAINT IF NOT EXISTS FOR (p:PitfallMemory) REQUIRE p.id IS UNIQUE",
 		"CREATE CONSTRAINT IF NOT EXISTS FOR (c:ConsolidationRun) REQUIRE c.run_id IS UNIQUE",
 	}
 	for _, cypher := range constraints {
@@ -622,7 +623,7 @@ func (s *Store) ScanRecent(ctx context.Context, since time.Time, limit int) ([]s
 			WHERE e.created_at >= $since AND e.obsoleted_at IS NULL
 			RETURN e.id AS id, e.summary AS summary, e.task_type AS taskType,
 			       e.project_id AS projectID, e.language AS language,
-			       e.entity_group AS entityGroup, e.weight AS weight,
+			       e.entity_group AS entityGroup, e.entity_group AS entityID, e.weight AS weight,
 			       e.last_accessed_at AS lastAccessed, e.created_at AS createdAt
 			ORDER BY e.last_accessed_at DESC
 			LIMIT $limit
@@ -639,6 +640,7 @@ func (s *Store) ScanRecent(ctx context.Context, since time.Time, limit int) ([]s
 			projectID, _, _ := neodriver.GetRecordValue[string](r, "projectID")
 			language, _, _ := neodriver.GetRecordValue[string](r, "language")
 			entityGroup, _, _ := neodriver.GetRecordValue[string](r, "entityGroup")
+				entityID, _, _ := neodriver.GetRecordValue[string](r, "entityID")
 			weight, _, _ := neodriver.GetRecordValue[float64](r, "weight")
 
 			pid, err := uuid.Parse(idStr)
@@ -659,6 +661,7 @@ func (s *Store) ScanRecent(ctx context.Context, since time.Time, limit int) ([]s
 				ProjectID:    projectID,
 				Language:     language,
 				EntityGroup:  entityGroup,
+				EntityID:     entityID,
 				Weight:       weight,
 				LastAccessed: la,
 			})
@@ -680,6 +683,11 @@ func (s *Store) SaveConsolidationRun(ctx context.Context, run *models.Consolidat
 		"candidateRulesFound": int64(run.CandidateRulesFound),
 		"rulesPersisted":     int64(run.RulesPersisted),
 		"averageAccuracy":    run.AverageAccuracy,
+		"pitfallsExtracted": int64(run.PitfallsExtracted),
+		"pitfallsMerged":    int64(run.PitfallsMerged),
+		"pitfallsPersisted": int64(run.PitfallsPersisted),
+		"rulesError":        run.RulesError,
+		"pitfallError":      run.PitfallError,
 	}
 	if run.CompletedAt != nil {
 		params["completedAt"] = *run.CompletedAt
@@ -696,7 +704,12 @@ func (s *Store) SaveConsolidationRun(ctx context.Context, run *models.Consolidat
 				episodics_scanned: $episodicsScanned,
 				candidate_rules_found: $candidateRulesFound,
 				rules_persisted: $rulesPersisted,
-				average_accuracy: $averageAccuracy
+				average_accuracy: $averageAccuracy,
+				pitfalls_extracted: $pitfallsExtracted,
+				pitfalls_merged: $pitfallsMerged,
+				pitfalls_persisted: $pitfallsPersisted,
+				rules_error: $rulesError,
+				pitfall_error: $pitfallError
 			})
 		`, params)
 		return nil, runErr
@@ -728,6 +741,11 @@ func (s *Store) GetConsolidationRun(ctx context.Context, runID uuid.UUID) (*mode
 		candFound, _, _ := neodriver.GetRecordValue[int64](r, "c.candidate_rules_found")
 		rulesPersisted, _, _ := neodriver.GetRecordValue[int64](r, "c.rules_persisted")
 		avgAcc, _, _ := neodriver.GetRecordValue[float64](r, "c.average_accuracy")
+			pitExtracted, _, _ := neodriver.GetRecordValue[int64](r, "c.pitfalls_extracted")
+			pitMerged, _, _ := neodriver.GetRecordValue[int64](r, "c.pitfalls_merged")
+			pitPersisted, _, _ := neodriver.GetRecordValue[int64](r, "c.pitfalls_persisted")
+			rulesError, _, _ := neodriver.GetRecordValue[string](r, "c.rules_error")
+			pitfallError, _, _ := neodriver.GetRecordValue[string](r, "c.pitfall_error")
 
 		rid, err := uuid.Parse(ridStr)
 		if err != nil {
@@ -741,6 +759,11 @@ func (s *Store) GetConsolidationRun(ctx context.Context, runID uuid.UUID) (*mode
 			CandidateRulesFound: int(candFound),
 			RulesPersisted:     int(rulesPersisted),
 			AverageAccuracy:    avgAcc,
+				PitfallsExtracted:  int(pitExtracted),
+				PitfallsMerged:     int(pitMerged),
+				PitfallsPersisted:  int(pitPersisted),
+				RulesError:         rulesError,
+				PitfallError:       pitfallError,
 		}
 		if !caIsNil {
 			result.CompletedAt = &completedAt

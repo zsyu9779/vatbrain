@@ -99,13 +99,18 @@ type ConsolidationTriggerResponse struct {
 // ConsolidationRunResult is the detailed output of a single consolidation run.
 // Returned by GET /api/v0/consolidation/runs/{run_id}.
 type ConsolidationRunResult struct {
-	RunID              uuid.UUID  `json:"run_id"`
-	StartedAt          time.Time  `json:"started_at"`
-	CompletedAt        *time.Time `json:"completed_at"`
-	EpisodicsScanned   int        `json:"episodics_scanned"`
-	CandidateRulesFound int       `json:"candidate_rules_found"`
-	RulesPersisted     int        `json:"rules_persisted"`
-	AverageAccuracy    float64    `json:"average_accuracy"`
+	RunID               uuid.UUID  `json:"run_id"`
+	StartedAt           time.Time  `json:"started_at"`
+	CompletedAt         *time.Time `json:"completed_at"`
+	EpisodicsScanned    int        `json:"episodics_scanned"`
+	CandidateRulesFound int        `json:"candidate_rules_found"`
+	RulesPersisted      int        `json:"rules_persisted"`
+	AverageAccuracy     float64    `json:"average_accuracy"`
+	PitfallsExtracted   int        `json:"pitfalls_extracted"`
+	PitfallsMerged      int        `json:"pitfalls_merged"`
+	PitfallsPersisted   int        `json:"pitfalls_persisted"`
+	RulesError          string     `json:"rules_error,omitempty"`
+	PitfallError        string     `json:"pitfall_error,omitempty"`
 }
 
 // ── Weight / Touch API (Section 5.5) ────────────────────────────────────────

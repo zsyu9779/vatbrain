@@ -4,32 +4,45 @@
 
 ## 项目状态
 
-- **阶段**: v0.1.1 存储可插拔重构 Phase 4 完成
+- **阶段**: v0.2 Phase 1 完成，进入 Phase 2
 - **语言**: Go (go 1.25.5)
-- **版本定位**: 三个 MemoryStore 后端全部就绪 (SQLite, Neo4j+pgvector, In-Memory)
+- **版本定位**: v0.2 实现中
 
-## 最近工作（2026-04-30）— v0.1.1 Phase 4 完成
+## 最近工作（2026-05-05）— v0.2 Phase 1 完成
 
-### 已完成：Neo4j+pgvector Store 适配器
+### 已完成
 
-- **新包**: `internal/store/neo4jpg/` — MemoryStore 接口的 Neo4j+pgvector 实现 (~530 行)
-- **15 个接口方法全部实现**：WriteEpisodic (Neo4j CREATE + best-effort pgvector insert)、SearchEpisodic (embedding: pgvector→Neo4j / no embedding: Cypher)、GetEpisodic、TouchEpisodic、UpdateEpisodicWeight、MarkObsolete、WriteSemantic、SearchSemantic、GetSemantic、CreateEdge (fmt.Sprintf 处理动态 rel type)、GetEdges (方向+类型过滤)、ScanRecent、SaveConsolidationRun、GetConsolidationRun、HealthCheck、Close
-- **Schema 自动建立**：uniqueness constraints on (:EpisodicMemory), (:SemanticMemory), (:ConsolidationRun)
-- **Store 工厂更新**：`NewMemoryStore` 接受 `*neo4j.Client` + `*pgvector.Client` 参数，连接 `neo4j+pgvector` 场景
-- **App 启动重排**：neo4j+pgvector 模式先创建客户端（hard-fail），再创建 store；`storeOwnsDB` 标记防止 double-close
-- **e2e 测试全面改造**：Phase 1-5 全部通过 Store 接口运行 — WriteEpisodic、LinkOnWrite、SearchEpisodic、ConsolidationEngine.Run
-- **smoke 测试更新**：TestSmoke_LinkOnWrite 使用 Store 接口并验证 RELATES_TO 边
+1. **PitfallMemory 模型**：`internal/models/pitfall_memory.go`
+   - `PitfallMemory` struct（所有字段对齐 00-design.md 2.3 节）
+   - `EntityType` enum / `RootCause` enum
+   - Pitfall 边类型 structs + sentinel errors
 
-### 编译/测试状态
-- `go build ./...` 清洁
-- `go vet ./...` 清洁
-- `go test ./internal/... -short` 全部通过（core、mcp、sqlite、vector）
+2. **MemoryStore 接口扩展**：`internal/store/memory_store.go`
+   - 7 个 Pitfall 方法 + `UpdateSemanticWeight`
+   - `PitfallSearchRequest` struct（双键匹配）
+
+3. **SQLite Pitfall 实现**：`internal/store/sqlite/pitfall.go` + schema 更新
+   - `pitfall_memories` 表 + `pitfall_edges` 表 + 索引
+   - `SaveConsolidationRun`/`GetConsolidationRun` 支持新字段（pitfalls_extracted, pitfalls_merged, pitfalls_persisted, rules_error, pitfall_error）
+
+4. **Neo4j+pgvector Pitfall 实现**：`internal/store/neo4jpg/pitfall.go` + store.go 更新
+   - `(:PitfallMemory)` 节点 + UNIQUE 约束
+   - `SaveConsolidationRun`/`GetConsolidationRun` 支持新字段
+   - pgvector 签名 embedding 双写
+
+5. **In-Memory Pitfall 实现**：`internal/store/memory/pitfall.go` + Store struct 扩展
+
+6. **Config 扩展**：`PitfallDecayConfig`（LambdaDecay=0.15, AlphaExperience=0.008, BetaActivity=0.03, CoolingThreshold=0.005）+ 环境变量
+
+7. **ConsolidationRunResult 扩展**：`internal/models/api.go` 新增 pitfall 统计字段
 
 ## 下一步
 
-- v0.2 features (Pitfall memory, advanced consolidation, etc.)
-- 集成测试需要 docker-compose services 运行（本地测试）
+- **Phase 2**: PitfallExtractor + ConsolidationEngine 并行化
+  1. `internal/core/pitfall_extractor.go` — PitfallExtractor（HAC 子聚类 + LLM prompt）
+  2. `internal/core/consolidation_engine.go` — 重构 Run 为并行双线（语义规则 + Pitfall）
+  3. `internal/core/link_on_write.go` — TRIGGERED_PITFALL 边关联检查
 
 ## 已知问题
 
-- 无
+- 无阻断性问题。go build / go vet / go test 全部通过。

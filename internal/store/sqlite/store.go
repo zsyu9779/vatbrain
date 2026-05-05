@@ -284,7 +284,7 @@ func (s *Store) ScanRecent(_ context.Context, since time.Time, limit int) ([]sto
 	defer s.mu.Unlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, summary, task_type, project_id, language, entity_group,
+		SELECT id, summary, task_type, project_id, language, entity_group, entity_group AS entity_id,
 		       weight, last_accessed_at
 		FROM episodic_memories
 		WHERE created_at >= ? AND obsoleted_at IS NULL
@@ -300,11 +300,13 @@ func (s *Store) ScanRecent(_ context.Context, since time.Time, limit int) ([]sto
 	for rows.Next() {
 		var item store.EpisodicScanItem
 		var idStr, taskTypeStr, laStr string
+		var entityID string
 		if err := rows.Scan(&idStr, &item.Summary, &taskTypeStr,
 			&item.ProjectID, &item.Language, &item.EntityGroup,
-			&item.Weight, &laStr); err != nil {
+			&entityID, &item.Weight, &laStr); err != nil {
 			return nil, err
 		}
+		item.EntityID = entityID
 		item.ID, _ = uuid.Parse(idStr)
 		item.TaskType = models.TaskType(taskTypeStr)
 		item.LastAccessed, _ = time.Parse(time.RFC3339, laStr)
@@ -325,9 +327,11 @@ func (s *Store) SaveConsolidationRun(_ context.Context, run *models.Consolidatio
 
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO consolidation_runs
-			(id, started_at, completed_at, episodics_scanned,
-			 candidate_rules_found, rules_persisted, average_accuracy)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+				(id, started_at, completed_at, episodics_scanned,
+				 candidate_rules_found, rules_persisted, average_accuracy,
+				 pitfalls_extracted, pitfalls_merged, pitfalls_persisted,
+				 rules_error, pitfall_error)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		run.RunID.String(),
 		run.StartedAt.UTC().Format(time.RFC3339),
@@ -336,6 +340,11 @@ func (s *Store) SaveConsolidationRun(_ context.Context, run *models.Consolidatio
 		run.CandidateRulesFound,
 		run.RulesPersisted,
 		run.AverageAccuracy,
+			run.PitfallsExtracted,
+			run.PitfallsMerged,
+			run.PitfallsPersisted,
+			run.RulesError,
+			run.PitfallError,
 	)
 	return err
 }
@@ -351,12 +360,17 @@ func (s *Store) GetConsolidationRun(_ context.Context, runID uuid.UUID) (*models
 
 	err := s.db.QueryRow(`
 		SELECT id, started_at, completed_at, episodics_scanned,
-		       candidate_rules_found, rules_persisted, average_accuracy
+			       candidate_rules_found, rules_persisted, average_accuracy,
+			       pitfalls_extracted, pitfalls_merged, pitfalls_persisted,
+			       rules_error, pitfall_error
 		FROM consolidation_runs WHERE id = ?
 	`, runID.String()).Scan(
 		&idStr, &startedStr, &completedStr,
 		&run.EpisodicsScanned, &run.CandidateRulesFound,
-		&run.RulesPersisted, &run.AverageAccuracy,
+			&run.RulesPersisted, &run.AverageAccuracy,
+			&run.PitfallsExtracted, &run.PitfallsMerged,
+			&run.PitfallsPersisted, &run.RulesError,
+			&run.PitfallError,
 	)
 	if err != nil {
 		return nil, err
