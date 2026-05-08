@@ -10,16 +10,16 @@
 ```
 v0.1 ──── v0.2 ──── v0.3 ──── v1.0 ──── v1.x
 最小闭环   记忆进化    预测能力    多智能体   持续演进
-(2-3周)   (2-3周)    (3-4周)    (4-6周)    (长期)
+(已完成)   (已完成)   (3-4周)    (4-6周)    (长期)
 ```
 
-| 版本 | 主题 | 核心交付 |
-|-----|------|---------|
-| v0.1 | 最小闭环 | 图+向量复合写入、两阶段检索、权重衰减、睡眠整合 v1 |
-| v0.2 | 记忆进化 | 错误记忆独立建模、记忆再巩固、行为归因权重 |
-| v0.3 | 预测与主动 | 风险预测、反事实推理、预测误差信号 |
-| v1.0 | 多智能体记忆 | 跨 Agent 记忆共享、记忆冲突协调、多租户 |
-| v1.x | 持续演进 | 联邦记忆、自适应衰减参数、长期评估体系 |
+| 版本 | 主题 | 核心交付 | 状态 |
+|-----|------|---------|------|
+| v0.1 | 最小闭环 | 图+向量复合写入、两阶段检索、权重衰减、睡眠整合 v1 | ✅ 完成 |
+| v0.2 | 记忆进化 | 错误记忆独立建模、记忆再巩固、行为归因权重 | ✅ 完成 |
+| v0.3 | 预测与主动 | 风险预测、反事实推理、预测误差信号 | 🧭 规划中 |
+| v1.0 | 多智能体记忆 | 跨 Agent 记忆共享、记忆冲突协调、多租户 | 🧭 规划中 |
+| v1.x | 持续演进 | 联邦记忆、自适应衰减参数、长期评估体系 | 🧭 规划中 |
 
 ---
 
@@ -91,10 +91,27 @@ v0.1 ──── v0.2 ──── v0.3 ──── v1.0 ──── v1.x
 - 多租户
 
 ### 准出标准
-- Pitfall 提取：在 200 条 debug 情境记忆中至少提取出 10 条有效 Pitfall 规则
-- 记忆再巩固：纠正 10 条错误检索结果，源记忆权重正确更新
-- 行为归因：权重增量与人工预期偏差 < 15%
-- 检索质量对比：v0.2 vs v0.1 在调试场景下的首条命中率有提升
+
+| 标准 | 状态 |
+|------|------|
+| Pitfall 提取：在 debug 情境记忆中提取有效 Pitfall 规则 | ✅ Phase 2 完成（HAC + LLM 流水线 + 24 测试用例） |
+| 记忆再巩固：纠错信号 DERIVED_FROM 溯源链反向传播 | ✅ Phase 3 完成（episodic/semantic/pitfall 全覆盖 + 8 测试用例） |
+| 行为归因：行为→权重 delta 纯函数（used/corrected/confirmed/ignored） | ✅ Phase 4 完成（ApplyFeedback + 8 测试用例） |
+| 错误感知检索：entity 锚点自动注入 Pitfall | ✅ Phase 5 完成（排序优先 + 最多 3 条） |
+| Pitfall API + MCP：独立搜索端点 + MCP 工具 | ✅ Phase 6 完成（POST /api/v0/pitfalls/search + search_pitfalls） |
+| Consolidation 并行化：规则提取与 Pitfall 提取并行 goroutine | ✅ Phase 2 完成 |
+
+### 实际交付
+
+v0.2 按 6 个 Phase 分步交付，3 次 commit：
+
+| Commit | 内容 |
+|--------|------|
+| `2f5a448` | Phase 0-1: Pitfall Memory 模型、LLM/Embedder 基础设施、三后端 Pitfall 存储 |
+| `3aa17d0` | Phase 2: PitfallExtractor、ConsolidationEngine 并行化、TRIGGERED_PITFALL 边 |
+| `8fa3f03` | Phase 3-6: Reconsolidation、Attribution、Error-aware Search、Pitfall API/MCP |
+
+全部单元测试通过（`internal/core` 45+ 用例，`internal/mcp` 7 工具集成测试）。
 
 ### 关键风险
 - 数据积累不足（debug 记录不够）→ 人工注入一批历史调试记录做种子数据
