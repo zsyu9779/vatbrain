@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,12 +20,13 @@ import (
 // memories with full traceability chains.
 //
 // v0.1 uses simple (project_id, task_type) clustering and concatenation-based
-// extraction. Later versions will use embedding clustering + LLM distillation.
+// extraction. v0.2 adds parallel pitfall extraction from debug-type episodics.
 type ConsolidationEngine struct {
 	HoursToScan       float64
 	MinClusterSize    int
 	AccuracyThreshold float64
 	LLMClient         llm.Client // v0.2: nil = degrade to v0.1 string-concat extraction
+	PitfallExtractor  *PitfallExtractor
 }
 
 // DefaultConsolidationEngine returns a ConsolidationEngine with v0.1 tuned defaults.
@@ -45,8 +47,8 @@ type PatternCluster struct {
 	Episodics []store.EpisodicScanItem
 }
 
-// Run executes a full consolidation pass: scan → cluster → extract → backtest →
-// persist.
+// Run executes a full consolidation pass: scan → (rules || pitfalls) → persist.
+// The semantic rule line and pitfall extraction line run in parallel goroutines.
 func (e *ConsolidationEngine) Run(
 	ctx context.Context,
 	s store.MemoryStore,
@@ -60,7 +62,7 @@ func (e *ConsolidationEngine) Run(
 
 	since := result.StartedAt.Add(-time.Duration(e.HoursToScan * float64(time.Hour)))
 
-	// Phase 1: Scan recent episodic memories.
+	// Phase 1: Scan recent episodic memories (shared across both lines).
 	episodics, err := s.ScanRecent(ctx, since, 1000)
 	if err != nil {
 		return result, fmt.Errorf("consolidation scan: %w", err)
@@ -73,11 +75,55 @@ func (e *ConsolidationEngine) Run(
 		return result, nil
 	}
 
-	// Phase 2: Cluster.
+	// Phase 2–5: Run rule extraction and pitfall extraction in parallel.
+	var wg sync.WaitGroup
+	var rulesErr, pitfallErr error
+	var ruleResult models.ConsolidationRunResult
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		ruleResult, rulesErr = e.runRuleExtraction(ctx, s, emb, runID, episodics)
+	}()
+
+	go func() {
+		defer wg.Done()
+		pitfallErr = e.runPitfallExtraction(ctx, s, runID, episodics, &result)
+	}()
+
+	wg.Wait()
+
+	// Merge rule extraction results.
+	result.RulesPersisted = ruleResult.RulesPersisted
+	result.CandidateRulesFound = ruleResult.CandidateRulesFound
+	result.AverageAccuracy = ruleResult.AverageAccuracy
+	result.RulesError = errToString(rulesErr)
+
+	// Pitfall results are already written into result by runPitfallExtraction.
+	result.PitfallError = errToString(pitfallErr)
+
+	now := time.Now()
+	result.CompletedAt = &now
+	return result, nil
+}
+
+// runRuleExtraction executes the semantic rule extraction line: cluster →
+// extract → backtest → persist. This is the v0.1 consolidation logic extracted
+// into its own goroutine.
+func (e *ConsolidationEngine) runRuleExtraction(
+	ctx context.Context,
+	s store.MemoryStore,
+	emb embedder.Embedder,
+	runID uuid.UUID,
+	episodics []store.EpisodicScanItem,
+) (models.ConsolidationRunResult, error) {
+	result := models.ConsolidationRunResult{RunID: runID}
+
+	// Cluster by (project_id, task_type).
 	clusters := clusterByPattern(episodics, e.MinClusterSize)
 	result.CandidateRulesFound = len(clusters)
 
-	// Phase 3-5: Extract → Backtest → Persist.
 	for _, cl := range clusters {
 		ruleContent := e.extractRule(ctx, cl)
 		accuracy := e.backtest(ctx, cl)
@@ -94,18 +140,18 @@ func (e *ConsolidationEngine) Run(
 
 		now := time.Now().UTC()
 		sem := &models.SemanticMemory{
-			ID:                  semID,
-			Type:                models.MemoryTypePattern,
-			Content:             ruleContent,
-			SourceType:          models.SourceTypeINFERRED,
-			TrustLevel:          models.DefaultTrustLevel,
-			Weight:              1.0,
-			EffectiveFrequency:  1.0,
-			CreatedAt:           now,
-			EntityGroup:         fmt.Sprintf("consolidation:%s:%s", cl.ProjectID, cl.TaskType),
-			ConsolidationRunID:  runID.String(),
-			BacktestAccuracy:    accuracy,
-			SourceEpisodicIDs:   sourceIDs,
+			ID:                 semID,
+			Type:               models.MemoryTypePattern,
+			Content:            ruleContent,
+			SourceType:         models.SourceTypeINFERRED,
+			TrustLevel:         models.DefaultTrustLevel,
+			Weight:             1.0,
+			EffectiveFrequency: 1.0,
+			CreatedAt:          now,
+			EntityGroup:        fmt.Sprintf("consolidation:%s:%s", cl.ProjectID, cl.TaskType),
+			ConsolidationRunID: runID.String(),
+			BacktestAccuracy:   accuracy,
+			SourceEpisodicIDs:  sourceIDs,
 		}
 
 		if err := s.WriteSemantic(ctx, sem); err != nil {
@@ -128,10 +174,52 @@ func (e *ConsolidationEngine) Run(
 			result.AverageAccuracy = (result.AverageAccuracy*float64(result.RulesPersisted-1) + accuracy) / float64(result.RulesPersisted)
 		}
 	}
-
-	now := time.Now()
-	result.CompletedAt = &now
 	return result, nil
+}
+
+// runPitfallExtraction executes the pitfall extraction line with a 120-second
+// timeout. It writes results directly into the provided result pointer.
+func (e *ConsolidationEngine) runPitfallExtraction(
+	ctx context.Context,
+	s store.MemoryStore,
+	runID uuid.UUID,
+	episodics []store.EpisodicScanItem,
+	result *models.ConsolidationRunResult,
+) error {
+	if e.PitfallExtractor == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	pitfalls, candidatesFound, merged, err := e.PitfallExtractor.Extract(ctx, episodics)
+	result.CandidateRulesFound += candidatesFound
+	result.PitfallsExtracted = len(pitfalls) + merged
+	result.PitfallsMerged = merged
+
+	if err != nil {
+		return fmt.Errorf("pitfall extraction: %w", err)
+	}
+
+	for _, p := range pitfalls {
+		// Persist pitfall.
+		if writeErr := s.WritePitfall(ctx, &p); writeErr != nil {
+			return fmt.Errorf("pitfall persist: %w", writeErr)
+		}
+
+		// Create DERIVED_FROM edges from pitfall to source episodics.
+		for _, epID := range p.SourceEpisodicIDs {
+			if edgeErr := s.CreateEdge(ctx, p.ID, epID, "DERIVED_FROM", map[string]any{
+				"run_id": runID.String(),
+			}); edgeErr != nil {
+				return fmt.Errorf("pitfall derived_from edge: %w", edgeErr)
+			}
+		}
+
+		result.PitfallsPersisted++
+	}
+	return nil
 }
 
 // clusterByPattern groups episodic memories by (project_id, task_type) and
@@ -220,4 +308,12 @@ func (e *ConsolidationEngine) backtest(ctx context.Context, cl PatternCluster) f
 		return 1.0
 	}
 	return 0.0
+}
+
+// errToString converts an error to a string, returning empty string for nil.
+func errToString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
