@@ -41,6 +41,7 @@ type Server struct {
 	Minio    *minio.Client
 
 	WeightDecay       *core.WeightDecayEngine
+	Reconsolidation   *core.ReconsolidationEngine
 	SignificanceGate  *core.SignificanceGate
 	PatternSeparation *core.PatternSeparation
 	RetrievalEngine   *core.RetrievalEngine
@@ -63,6 +64,7 @@ func NewServer(
 	redisClient *redis.Client,
 	minioClient *minio.Client,
 	weightDecay *core.WeightDecayEngine,
+		reconsolidation *core.ReconsolidationEngine,
 	significanceGate *core.SignificanceGate,
 	patternSeparation *core.PatternSeparation,
 	retrievalEngine *core.RetrievalEngine,
@@ -116,6 +118,7 @@ func (s *Server) Routes() chi.Router {
 	r.Route("/api/v0", func(r chi.Router) {
 		r.Post("/memories/episodic", s.handleWrite)
 		r.Post("/memories/search", s.handleSearch)
+			r.Post("/pitfalls/search", s.handlePitfallSearch)
 		r.Post("/memories/{memory_id}/feedback", s.handleFeedback)
 		r.Post("/memories/{memory_id}/touch", s.handleTouch)
 		r.Get("/memories/{memory_id}/weight", s.handleWeightDetail)

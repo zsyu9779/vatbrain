@@ -24,6 +24,7 @@ func minimalApp() *app.App {
 		Store:              memory.NewStore(),
 		WorkingMemory:      store.NewWorkingMemoryBuffer(20),
 		WeightDecay:        core.DefaultWeightDecayEngine(),
+		Reconsolidation:    core.DefaultReconsolidationEngine(),
 		SignificanceGate:   core.DefaultSignificanceGate(),
 		PatternSeparation:  core.DefaultPatternSeparation(),
 		RetrievalEngine:    core.DefaultRetrievalEngine(),
@@ -47,6 +48,7 @@ func TestMCPServer_ToolRegistration(t *testing.T) {
 	expected := []string{
 		"write_memory",
 		"search_memories",
+		"search_pitfalls",
 		"trigger_consolidation",
 		"get_memory_weight",
 		"touch_memory",

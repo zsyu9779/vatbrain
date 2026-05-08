@@ -28,6 +28,7 @@ func RegisteredTools(a *app.App) []server.ServerTool {
 	return []server.ServerTool{
 		writeMemoryTool(a),
 		searchMemoriesTool(a),
+		searchPitfallsTool(a),
 		triggerConsolidationTool(a),
 		getMemoryWeightTool(a),
 		touchMemoryTool(a),

@@ -49,12 +49,17 @@ type SearchRequest struct {
 // SearchResultItem is a single result in a search response.
 type SearchResultItem struct {
 	MemoryID       uuid.UUID   `json:"memory_id"`
-	Type           string      `json:"type"` // "episodic" | "semantic"
+	Type           string      `json:"type"` // "episodic" | "semantic" | "pitfall"
 	Content        string      `json:"content"`
 	TrustLevel     TrustLevel  `json:"trust_level"`
 	Weight         float64     `json:"weight"`
 	RelevanceScore float64     `json:"relevance_score"`
-	SourceIDs      []uuid.UUID `json:"source_ids"`
+	SourceIDs      []uuid.UUID `json:"source_ids,omitempty"`
+
+	// Pitfall-specific fields (v0.2, populated when Type="pitfall").
+	RootCauseCategory string `json:"root_cause_category,omitempty"`
+	FixStrategy       string `json:"fix_strategy,omitempty"`
+	WasUserCorrected  bool   `json:"was_user_corrected,omitempty"`
 }
 
 // ContextFilterStats reports metrics from Stage 1 (Contextual Gating).

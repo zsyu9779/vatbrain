@@ -169,7 +169,7 @@ func TestSmoke_LinkOnWrite(t *testing.T) {
 	}
 
 	// Trigger LinkOnWrite.
-	core.LinkOnWrite(ctx, store, mem1ID, summaries[0], projectID)
+	core.LinkOnWrite(ctx, store, mem1ID, summaries[0], projectID, "", "")
 
 	// Verify RELATES_TO edge was created.
 	edges, err := store.GetEdges(ctx, mem1ID, "RELATES_TO", "out")

@@ -15,7 +15,7 @@ import (
 // handleSearch implements POST /api/v0/memories/search.
 //
 // Pipeline: embed query → Store.SearchEpisodic → Contextual Gating →
-// merge with semantic results → respond.
+// merge with semantic results → inject pitfalls → respond.
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	var req models.SearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -73,7 +73,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		// Compute relevance: use weight as fallback since Store already ranked by similarity.
 		score := ep.Weight
 		results = append(results, models.SearchResultItem{
 			MemoryID:       ep.ID,
@@ -106,6 +105,44 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// v0.2: Error-aware search — inject pitfall matches for the entity anchor.
+	if req.Context.EntityID != "" && req.Context.ProjectID != "" {
+		pitfalls, pfErr := s.Store.SearchPitfallByEntity(ctx, req.Context.EntityID, req.Context.ProjectID)
+		if pfErr != nil {
+			slog.Warn("store search pitfalls", "entity", req.Context.EntityID, "err", pfErr)
+		} else {
+			// Sort: user-corrected first, then occurrence_count desc, then weight desc.
+			sort.Slice(pitfalls, func(i, j int) bool {
+				if pitfalls[i].WasUserCorrected != pitfalls[j].WasUserCorrected {
+					return pitfalls[i].WasUserCorrected
+				}
+				if pitfalls[i].OccurrenceCount != pitfalls[j].OccurrenceCount {
+					return pitfalls[i].OccurrenceCount > pitfalls[j].OccurrenceCount
+				}
+				return pitfalls[i].Weight > pitfalls[j].Weight
+			})
+
+			// Inject at most 3 pitfalls (7±2 principle, design doc D4).
+			pitfallLimit := 3
+			if len(pitfalls) < pitfallLimit {
+				pitfallLimit = len(pitfalls)
+			}
+			for _, p := range pitfalls[:pitfallLimit] {
+				results = append(results, models.SearchResultItem{
+					MemoryID:          p.ID,
+					Type:              "pitfall",
+					Content:           p.Signature,
+					TrustLevel:        p.TrustLevel,
+					Weight:            p.Weight,
+					RelevanceScore:    0.6, // moderate relevance for entity-anchored pitfalls
+					RootCauseCategory: string(p.RootCauseCategory),
+					FixStrategy:       p.FixStrategy,
+					WasUserCorrected:  p.WasUserCorrected,
+				})
+			}
+		}
+	}
+
 	// Sort by relevance descending, cap at TopK.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].RelevanceScore > results[j].RelevanceScore
@@ -117,6 +154,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, models.SearchResponse{
 		Results:            results,
 		ContextFilterStats:  stats,
-		SemanticRankTimeMs: 0, // Store handles ranking internally
+		SemanticRankTimeMs: 0,
 	})
 }

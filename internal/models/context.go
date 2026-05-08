@@ -8,6 +8,7 @@ type SearchContext struct {
 	ProjectID   string   `json:"project_id"`
 	Language    string   `json:"language"`
 	TaskType    TaskType `json:"task_type"`
+	EntityID    string   `json:"entity_id"` // v0.2: entity anchor for pitfall injection
 	ActiveFiles []string `json:"active_files"`
 	SessionID   string   `json:"session_id"`
 }

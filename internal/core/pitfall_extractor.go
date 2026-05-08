@@ -360,6 +360,12 @@ func parsePitfallResponse(raw string) (PitfallLLMOutput, error) {
 	return output, nil
 }
 
+// pitfallMergeGroup tracks which pitfalls should be merged during deduplication.
+type pitfallMergeGroup struct {
+	primary int
+	members []int
+}
+
 // deduplicatePitfalls merges pitfalls whose signatures have cosine similarity
 // above the dedup threshold (default 0.9). Returns the deduplicated set.
 func (pe *PitfallExtractor) deduplicatePitfalls(
@@ -381,18 +387,14 @@ func (pe *PitfallExtractor) deduplicatePitfalls(
 	}
 
 	// Greedy merge: for each pitfall, find if it should be merged into an existing one.
-	type mergedGroup struct {
-		primary int // index of primary pitfall
-		members []int
-	}
-	var groups []mergedGroup
+	var groups []pitfallMergeGroup
 	assigned := make([]bool, len(pitfalls))
 
 	for i := range pitfalls {
 		if assigned[i] {
 			continue
 		}
-		mg := mergedGroup{primary: i, members: []int{i}}
+		mg := pitfallMergeGroup{primary: i, members: []int{i}}
 		assigned[i] = true
 
 		for j := i + 1; j < len(pitfalls); j++ {
@@ -418,7 +420,7 @@ func (pe *PitfallExtractor) deduplicatePitfalls(
 		if len(mg.members) == 1 {
 			result[gi] = pitfalls[mg.primary]
 		} else {
-			result[gi] = mergePitfallGroup(pitfalls, mg)
+			result[gi] = pe.mergePitfallGroup(pitfalls, mg)
 		}
 	}
 	return result
@@ -426,7 +428,7 @@ func (pe *PitfallExtractor) deduplicatePitfalls(
 
 // mergePitfallGroup merges multiple pitfalls into a single primary (the one
 // with highest occurrence_count). Follows the merge strategy in design doc §4.4.
-func mergePitfallGroup(pitfalls []models.PitfallMemory, mg mergedGroup) models.PitfallMemory {
+func (pe *PitfallExtractor) mergePitfallGroup(pitfalls []models.PitfallMemory, mg pitfallMergeGroup) models.PitfallMemory {
 	primary := pitfalls[mg.primary]
 	for _, idx := range mg.members {
 		if idx == mg.primary {
@@ -475,6 +477,3 @@ func inferEntityType(entityID string) models.EntityType {
 		return models.EntityTypeFunction
 	}
 }
-
-// Ensure unused imports are referenced.
-var _ = vector.CosineSimilarity

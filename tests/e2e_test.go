@@ -135,7 +135,7 @@ func TestE2E_WriteRetrieveDecayConsolidate(t *testing.T) {
 	// Phase 2: LINK ON WRITE — create RELATES_TO edges via Store
 	// ─────────────────────────────────────────────────────────────
 	for _, m := range memories {
-		core.LinkOnWrite(ctx, st, m.id, m.summary, projectID)
+		core.LinkOnWrite(ctx, st, m.id, m.summary, projectID, "", m.taskType)
 	}
 	t.Log("Phase 2 LINK: complete — RELATES_TO edges created via Store")
 

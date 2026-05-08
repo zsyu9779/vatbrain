@@ -4,45 +4,63 @@
 
 ## 项目状态
 
-- **阶段**: v0.2 Phase 1 完成，进入 Phase 2
+- **阶段**: v0.2 Phase 2-6 完成 + Code Review 修复
 - **语言**: Go (go 1.25.5)
-- **版本定位**: v0.2 实现中
+- **版本定位**: v0.2 实现完毕，测试通过
 
-## 最近工作（2026-05-05）— v0.2 Phase 1 完成
+## 最近工作（2026-05-08）— v0.2 Phase 2-4 Code Review 修复
 
-### 已完成
+### 已修复的 Bug
 
-1. **PitfallMemory 模型**：`internal/models/pitfall_memory.go`
-   - `PitfallMemory` struct（所有字段对齐 00-design.md 2.3 节）
-   - `EntityType` enum / `RootCause` enum
-   - Pitfall 边类型 structs + sentinel errors
+1. **P0: Reconsolidation TotalWeightDelta 总是 0**
+   - 原因：在计算 delta 前本地 `ep.Weight` 已被修改
+   - 修复：在三个路径（processEpisodic, processSemantic, processPitfall）中保存 `oldWeight` 后再计算 delta
+   - 文件：`internal/core/reconsolidation_engine.go`
 
-2. **MemoryStore 接口扩展**：`internal/store/memory_store.go`
-   - 7 个 Pitfall 方法 + `UpdateSemanticWeight`
-   - `PitfallSearchRequest` struct（双键匹配）
+2. **P0: PitfallExtractor 未注入到 ConsolidationEngine**
+   - 原因：`app.New()` 中 `PitfallExtractor` 字段从未赋值
+   - 修复：在 `app.go` 中创建 `PitfallExtractor` 并赋值到 `consolidation.PitfallExtractor`
+   - 文件：`internal/app/app.go`
 
-3. **SQLite Pitfall 实现**：`internal/store/sqlite/pitfall.go` + schema 更新
-   - `pitfall_memories` 表 + `pitfall_edges` 表 + 索引
-   - `SaveConsolidationRun`/`GetConsolidationRun` 支持新字段（pitfalls_extracted, pitfalls_merged, pitfalls_persisted, rules_error, pitfall_error）
+3. **P1: feedback_handler.go 冗余存储查询 + 错误日志不准确**
+   - 修复：提取 `lookupMemory` 方法，一次查询保存结果，避免重复 fetch
+   - 修复：错误日志使用最具体的 lookup 错误
+   - 文件：`internal/api/feedback_handler.go`
 
-4. **Neo4j+pgvector Pitfall 实现**：`internal/store/neo4jpg/pitfall.go` + store.go 更新
-   - `(:PitfallMemory)` 节点 + UNIQUE 约束
-   - `SaveConsolidationRun`/`GetConsolidationRun` 支持新字段
-   - pgvector 签名 embedding 双写
+4. **P1: 死代码移除**
+   - 删除 `pitfall_extractor.go:482` 的 `var _ = vector.CosineSimilarity`
+   - 文件：`internal/core/pitfall_extractor.go`
 
-5. **In-Memory Pitfall 实现**：`internal/store/memory/pitfall.go` + Store struct 扩展
+5. **P1: MaxTracebackHops 未使用**
+   - 修复：processSemantic / processPitfall 入口添加 `re.MaxTracebackHops < 1` guard
+   - 字段注释明确说明 v0.2 为 1-hop 拓扑，字段保留给未来多跳链
+   - 文件：`internal/core/reconsolidation_engine.go`
 
-6. **Config 扩展**：`PitfallDecayConfig`（LambdaDecay=0.15, AlphaExperience=0.008, BetaActivity=0.03, CoolingThreshold=0.005）+ 环境变量
+6. **P2: ApplyFeedback 权重上限未限制**
+   - 修复：添加上限 `if newWeight > 1 → 1`，与 `clampWeight` 保持 [0,1] 一致
+   - 更新 4 个相关测试用例（Used, Corrected, CorrectedByUser, Confirmed, ConsecutiveCorrections）
+   - 文件：`internal/core/attribution.go`, `internal/core/attribution_test.go`
 
-7. **ConsolidationRunResult 扩展**：`internal/models/api.go` 新增 pitfall 统计字段
+### 验证结果
 
-## 下一步
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test ./internal/core/...` ✅ (全部 Phase 1-6 测试)
+- `go test ./internal/mcp/...` ✅
+- 集成测试（e2e/smoke）需要 Neo4j+pgvector 不可用，跳过
 
-- **Phase 2**: PitfallExtractor + ConsolidationEngine 并行化
-  1. `internal/core/pitfall_extractor.go` — PitfallExtractor（HAC 子聚类 + LLM prompt）
-  2. `internal/core/consolidation_engine.go` — 重构 Run 为并行双线（语义规则 + Pitfall）
-  3. `internal/core/link_on_write.go` — TRIGGERED_PITFALL 边关联检查
+## 当前文件变更清单
+
+| 文件 | 变更 |
+|------|------|
+| `internal/core/reconsolidation_engine.go` | TotalWeightDelta 修复 + MaxTracebackHops guard |
+| `internal/core/attribution.go` | 权重上限 [0,1] |
+| `internal/core/attribution_test.go` | 更新测试以匹配上限行为 |
+| `internal/core/pitfall_extractor.go` | 删除死代码 |
+| `internal/api/feedback_handler.go` | 提取 lookupMemory，消除冗余查询 |
+| `internal/app/app.go` | 注入 PitfallExtractor 到 ConsolidationEngine |
 
 ## 已知问题
 
-- 无阻断性问题。go build / go vet / go test 全部通过。
+- 无阻断性问题。所有单元测试通过。
+- 集成测试需要 Neo4j+pgvector 可用（CI 环境正常）。

@@ -143,6 +143,25 @@ const (
 	DimensionCausal   RelationDimension = "CAUSAL"
 )
 
+// DefaultTrustLevelForSource returns the trust level assigned to a new memory
+// based exclusively on its source provenance (design doc §8.2).
+func DefaultTrustLevelForSource(st SourceType) TrustLevel {
+	switch st {
+	case SourceTypeUSER, SourceTypeUserDeclared:
+		return 5
+	case SourceTypeAST:
+		return 4
+	case SourceTypeDEBUG:
+		return 3
+	case SourceTypeINFERRED, SourceTypeSummarized:
+		return 2
+	case SourceTypeLLM:
+		return 1
+	default:
+		return DefaultTrustLevel
+	}
+}
+
 // Default weight and threshold constants.
 const (
 	DefaultWeight      float64 = 1.0

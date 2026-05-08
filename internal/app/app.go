@@ -40,6 +40,7 @@ type App struct {
 	storeOwnsDB bool
 
 	WeightDecay       *core.WeightDecayEngine
+	Reconsolidation   *core.ReconsolidationEngine
 	SignificanceGate  *core.SignificanceGate
 	PatternSeparation *core.PatternSeparation
 	RetrievalEngine   *core.RetrievalEngine
@@ -148,6 +149,16 @@ func New(ctx context.Context) (*App, error) {
 	}
 	consolidation.LLMClient = llmClient
 
+	// v0.2: Wire pitfall extractor into the consolidation sleep cycle.
+	// LLMClient may be nil — the extractor falls back to heuristic extraction.
+	consolidation.PitfallExtractor = &core.PitfallExtractor{
+		MinClusterSize: 2,
+		MergeThreshold: 0.85,
+		DedupThreshold: 0.9,
+		Embedder:       emb,
+		LLMClient:      llmClient,
+	}
+
 	return &App{
 		Config:             cfg,
 		Store:              s,
@@ -158,6 +169,7 @@ func New(ctx context.Context) (*App, error) {
 		Minio:              minioClient,
 		storeOwnsDB:        storeOwnsDB,
 		WeightDecay:        weightDecay,
+		Reconsolidation:    core.DefaultReconsolidationEngine(),
 		SignificanceGate:   significanceGate,
 		PatternSeparation:  patternSeparation,
 		RetrievalEngine:    retrievalEngine,

@@ -178,7 +178,7 @@ func writeMemoryTool(a *app.App) server.ServerTool {
 			}
 
 			// Link to related memories.
-			core.LinkOnWrite(ctx, a.Store, memoryID, summary, projectID)
+			core.LinkOnWrite(ctx, a.Store, memoryID, summary, projectID, entityID, models.TaskType(taskType))
 
 			// Push to working-memory cycles.
 			a.WorkingMemory.Push(projectID, summary)
