@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-05-08 — Cursor 聊天记录批量导入
+
+1. **Cursor 聊天记录导入工具** (`cmd/vatbrain/import_cursor.go`)
+   - 扫描 `~/.cursor/projects/*/agent-transcripts/*/*.jsonl` 解析 JSONL 对话
+   - 自动推断 language（go/zh/proto）、task_type（debug/feature/refactor/review）
+   - 支持 `--dry-run`（预览）和 `--limit N`（限制数量）
+2. **全量导入完成**: 269 条 episodic memory → Neo4j + pgvector
+3. **修复 Bug**: `time.Now()` → `time.Now().UTC()`、字节截断 → rune 截断
+4. **scanEpisodic/scanSemantic 修复**: 改用 `dbtype.Node` 读取属性
+
+---
+
 ## 2026-04-29 — v0.1.1 Phase 3 完成
 
 - Engine 层 Adaption：ConsolidationEngine.Run()/LinkOnWrite 接受 MemoryStore 接口

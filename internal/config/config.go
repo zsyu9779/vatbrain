@@ -5,6 +5,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/vatbrain/vatbrain/internal/db/minio"
 	"github.com/vatbrain/vatbrain/internal/db/neo4j"
@@ -42,6 +43,7 @@ type Config struct {
 	PitfallDecay      PitfallDecayConfig
 	Scheduler         SchedulerConfig
 	LLM               LLMConfig
+	Watcher           WatcherConfig
 }
 
 // WeightDecayConfig holds tunable parameters for the weight decay engine.
@@ -89,6 +91,18 @@ type SchedulerConfig struct {
 	// ConsolidationCron is the cron expression for the daily consolidation job.
 	// Default "0 3 * * *" (3 AM daily).
 	ConsolidationCron string
+}
+
+// WatcherConfig holds configuration for the Agent Memory Watcher subsystem.
+type WatcherConfig struct {
+	Enabled           bool          // VATBRAIN_WATCHER_ENABLED (default false)
+	PollInterval      time.Duration // VATBRAIN_WATCHER_INTERVAL_SECS (default 300)
+	Adapters          string        // VATBRAIN_WATCHER_ADAPTERS: comma-separated list or "all"
+	AdapterConfigDir  string        // VATBRAIN_WATCHER_CONFIG_DIR: custom adapter YAML dir
+	DataDir           string        // VATBRAIN_WATCHER_DATA_DIR: seen set persistence dir
+	RefinePromptFile  string        // VATBRAIN_WATCHER_REFINE_PROMPT_FILE: custom LLM prompt
+	ClaudeCodeHomeDir string        // VATBRAIN_CLAUDE_CODE_HOME: override home dir
+	OpenCodeMemoryPath string       // VATBRAIN_OPENCODE_MEMORY_PATH
 }
 
 // LLMConfig holds configuration for LLM API access (Claude).
@@ -184,6 +198,17 @@ func LoadFromEnv() Config {
 			APIKey:  envStr("ANTHROPIC_API_KEY", ""),
 			BaseURL: envStr("ANTHROPIC_BASE_URL", ""),
 			Model:   envStr("ANTHROPIC_MODEL", "claude-sonnet-4-6-20250501"),
+		},
+
+		Watcher: WatcherConfig{
+			Enabled:            envBool("VATBRAIN_WATCHER_ENABLED", false),
+			PollInterval:       time.Duration(envInt("VATBRAIN_WATCHER_INTERVAL_SECS", 300)) * time.Second,
+			Adapters:           envStr("VATBRAIN_WATCHER_ADAPTERS", "claude-code"),
+			AdapterConfigDir:   envStr("VATBRAIN_WATCHER_CONFIG_DIR", ""),
+			DataDir:            envStr("VATBRAIN_WATCHER_DATA_DIR", ""),
+			RefinePromptFile:   envStr("VATBRAIN_WATCHER_REFINE_PROMPT_FILE", ""),
+			ClaudeCodeHomeDir:  envStr("VATBRAIN_CLAUDE_CODE_HOME", ""),
+			OpenCodeMemoryPath: envStr("VATBRAIN_OPENCODE_MEMORY_PATH", ""),
 		},
 	}
 }

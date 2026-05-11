@@ -4,63 +4,56 @@
 
 ## 项目状态
 
-- **阶段**: v0.2 Phase 2-6 完成 + Code Review 修复
+- **阶段**: v0.2.1 — Agent Memory Watcher 实施中
 - **语言**: Go (go 1.25.5)
-- **版本定位**: v0.2 实现完毕，测试通过
+- **分支**: `feature/agent-memory-watcher`
 
-## 最近工作（2026-05-08）— v0.2 Phase 2-4 Code Review 修复
+## 最近工作（2026-05-10/11）— Agent Memory Watcher 实施
 
-### 已修复的 Bug
+### 已完成
 
-1. **P0: Reconsolidation TotalWeightDelta 总是 0**
-   - 原因：在计算 delta 前本地 `ep.Weight` 已被修改
-   - 修复：在三个路径（processEpisodic, processSemantic, processPitfall）中保存 `oldWeight` 后再计算 delta
-   - 文件：`internal/core/reconsolidation_engine.go`
+基于 `docs/v0.2.1/tech-specs/01-agent-memory-sync.md` 设计文档实现。
 
-2. **P0: PitfallExtractor 未注入到 ConsolidationEngine**
-   - 原因：`app.New()` 中 `PitfallExtractor` 字段从未赋值
-   - 修复：在 `app.go` 中创建 `PitfallExtractor` 并赋值到 `consolidation.PitfallExtractor`
-   - 文件：`internal/app/app.go`
+**Step 1-4 已完成**, Step 5 验证中：
 
-3. **P1: feedback_handler.go 冗余存储查询 + 错误日志不准确**
-   - 修复：提取 `lookupMemory` 方法，一次查询保存结果，避免重复 fetch
-   - 修复：错误日志使用最具体的 lookup 错误
-   - 文件：`internal/api/feedback_handler.go`
+1. **Watcher 基础设施** (`internal/watcher/`)
+   - `provider.go` — MemoryProvider 接口、RawMemory、ProviderRegistry、seenSet (LRU + JSON 持久化)
+   - `watcher.go` — MemoryWatcher 编排器（周期性轮询、去重、写入管道）
+   - `refiner.go` — LLM 提炼 + 启发式回退管线
+   - 17 个单元测试全部通过
 
-4. **P1: 死代码移除**
-   - 删除 `pitfall_extractor.go:482` 的 `var _ = vector.CosineSimilarity`
-   - 文件：`internal/core/pitfall_extractor.go`
+2. **4 个适配器** (`internal/watcher/adapters/`)
+   - `claude_code.go` — Claude Code (P0): 扫描 `~/.claude/projects/*/memory/*.md`，解析 YAML frontmatter
+   - `opencode.go` — OpenCode (P1): 骨架适配器（待调研具体格式）
+   - `cursor.go` — Cursor (P1): JSONL 增量解析，复用 import_cursor 逻辑
+   - `custom.go` — Custom (P1): YAML 驱动，用户可自定义任意 Agent 格式
 
-5. **P1: MaxTracebackHops 未使用**
-   - 修复：processSemantic / processPitfall 入口添加 `re.MaxTracebackHops < 1` guard
-   - 字段注释明确说明 v0.2 为 1-hop 拓扑，字段保留给未来多跳链
-   - 文件：`internal/core/reconsolidation_engine.go`
+3. **MCP 工具** (`internal/mcp/`)
+   - `list_adapters` — 列出所有适配器及状态
+   - `sync_memories` — 手动触发全量同步
+   - `configure_adapter` — 运行时创建 Custom 适配器
 
-6. **P2: ApplyFeedback 权重上限未限制**
-   - 修复：添加上限 `if newWeight > 1 → 1`，与 `clampWeight` 保持 [0,1] 一致
-   - 更新 4 个相关测试用例（Used, Corrected, CorrectedByUser, Confirmed, ConsecutiveCorrections）
-   - 文件：`internal/core/attribution.go`, `internal/core/attribution_test.go`
+4. **App 集成** (`internal/app/app.go`)
+   - 条件创建：`VATBRAIN_WATCHER_ENABLED=true` 时启动
+   - 生命周期：Start (goroutine) / Stop (graceful) + SeenSet 持久化
 
-### 验证结果
+5. **配置** (`internal/config/config.go`)
+   - 新增 WatcherConfig，7 个环境变量
 
-- `go build ./...` ✅
-- `go vet ./...` ✅
-- `go test ./internal/core/...` ✅ (全部 Phase 1-6 测试)
-- `go test ./internal/mcp/...` ✅
-- 集成测试（e2e/smoke）需要 Neo4j+pgvector 不可用，跳过
+### 测试结果
 
-## 当前文件变更清单
-
-| 文件 | 变更 |
-|------|------|
-| `internal/core/reconsolidation_engine.go` | TotalWeightDelta 修复 + MaxTracebackHops guard |
-| `internal/core/attribution.go` | 权重上限 [0,1] |
-| `internal/core/attribution_test.go` | 更新测试以匹配上限行为 |
-| `internal/core/pitfall_extractor.go` | 删除死代码 |
-| `internal/api/feedback_handler.go` | 提取 lookupMemory，消除冗余查询 |
-| `internal/app/app.go` | 注入 PitfallExtractor 到 ConsolidationEngine |
+- `go build ./...` ✅ 通过
+- `go vet ./...` ✅ 通过
+- `go test ./...` ✅ 395 通过, 4 失败（均来自 tests/ 的 Neo4j/Pgvector E2E，预先存在）
+- 新增 17 个 watcher 测试 + 现有 MCP 测试全部通过
 
 ## 已知问题
 
-- 无阻断性问题。所有单元测试通过。
-- 集成测试需要 Neo4j+pgvector 可用（CI 环境正常）。
+- 无阻断性问题
+- OpenCode 适配器为骨架（需调研具体存储格式）
+- Cursor 适配器使用轮询而非 fsnotify（当前设计简化，后续可加 Watch 方法）
+
+## 下一步
+
+- 提交 commit 到 `feature/agent-memory-watcher` 分支
+- 可选：集成测试（需要设置 ANTHROPIC_API_KEY + 真实 Claude Code memory 目录）

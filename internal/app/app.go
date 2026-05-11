@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/vatbrain/vatbrain/internal/config"
@@ -18,6 +20,8 @@ import (
 	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/llm"
 	"github.com/vatbrain/vatbrain/internal/store"
+	"github.com/vatbrain/vatbrain/internal/watcher"
+	"github.com/vatbrain/vatbrain/internal/watcher/adapters"
 )
 
 // App holds all initialised application components.
@@ -47,6 +51,7 @@ type App struct {
 	Consolidation     *core.ConsolidationEngine
 	Embedder          embedder.Embedder
 	LLM               llm.Client // v0.2: LLM client for rule/pitfall extraction
+	MemoryWatcher     *watcher.MemoryWatcher // v0.2.1: Agent Memory Watcher
 }
 
 // New bootstraps the full application: config, databases, engines, and embedder.
@@ -159,6 +164,23 @@ func New(ctx context.Context) (*App, error) {
 		LLMClient:      llmClient,
 	}
 
+	// v0.2.1: Agent Memory Watcher — passive memory sync from agent-native stores.
+	var memoryWatcher *watcher.MemoryWatcher
+	if cfg.Watcher.Enabled {
+		providers := buildWatcherProviders(&cfg.Watcher)
+		refiner := watcher.NewRefiner(llmClient, emb, "")
+		memoryWatcher = watcher.NewMemoryWatcher(providers, refiner, s,
+			cfg.Watcher.PollInterval, 10000)
+		if cfg.Watcher.DataDir != "" {
+			if err := memoryWatcher.RestoreSeenSet(
+				filepath.Join(cfg.Watcher.DataDir, "watcher_seen.json"),
+			); err != nil {
+				slog.Warn("watcher: restore seen set", "err", err)
+			}
+		}
+		go memoryWatcher.Start(ctx)
+	}
+
 	return &App{
 		Config:             cfg,
 		Store:              s,
@@ -176,6 +198,7 @@ func New(ctx context.Context) (*App, error) {
 		Consolidation:      consolidation,
 		Embedder:           emb,
 		LLM:                llmClient,
+		MemoryWatcher:      memoryWatcher,
 	}, nil
 }
 
@@ -203,6 +226,16 @@ func (a *App) Close() {
 			slog.Warn("error closing redis", "err", err)
 		}
 	}
+	if a.MemoryWatcher != nil {
+		a.MemoryWatcher.Stop()
+		if a.Config.Watcher.DataDir != "" {
+			if err := a.MemoryWatcher.DumpSeenSet(
+				filepath.Join(a.Config.Watcher.DataDir, "watcher_seen.json"),
+			); err != nil {
+				slog.Warn("watcher: dump seen set", "err", err)
+			}
+		}
+	}
 }
 
 func applyWeightDecayConfig(w *core.WeightDecayEngine, cfg *config.Config) {
@@ -227,4 +260,35 @@ func applySignificanceConfig(s *core.SignificanceGate, cfg *config.Config) {
 	if cfg.SignificanceGate.MinSubsequentRefs != 0 {
 		s.MinSubsequentRefs = cfg.SignificanceGate.MinSubsequentRefs
 	}
+}
+
+// buildWatcherProviders constructs the list of MemoryProvider adapters based on
+// the VATBRAIN_WATCHER_ADAPTERS env var (comma-separated names or "all").
+func buildWatcherProviders(cfg *config.WatcherConfig) []watcher.MemoryProvider {
+	adapterNames := strings.Split(cfg.Adapters, ",")
+	if cfg.Adapters == "all" {
+		adapterNames = []string{"claude-code", "opencode", "cursor"}
+	}
+
+	enabled := make(map[string]bool)
+	for _, name := range adapterNames {
+		enabled[strings.TrimSpace(name)] = true
+	}
+
+	var providers []watcher.MemoryProvider
+
+	if enabled["claude-code"] {
+		providers = append(providers,
+			adapters.NewClaudeCodeProvider(cfg.ClaudeCodeHomeDir))
+	}
+	if enabled["opencode"] {
+		providers = append(providers,
+			adapters.NewOpenCodeProvider(cfg.OpenCodeMemoryPath))
+	}
+	if enabled["cursor"] {
+		providers = append(providers,
+			adapters.NewCursorProvider(cfg.ClaudeCodeHomeDir))
+	}
+
+	return providers
 }

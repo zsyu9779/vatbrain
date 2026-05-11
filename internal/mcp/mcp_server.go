@@ -25,7 +25,7 @@ func NewMCPServer(a *app.App) *server.MCPServer {
 // RegisteredTools returns all VatBrain MCP tools with their handlers.
 // This is exported for testing — use mcptest.NewServer with these tools.
 func RegisteredTools(a *app.App) []server.ServerTool {
-	return []server.ServerTool{
+	tools := []server.ServerTool{
 		writeMemoryTool(a),
 		searchMemoriesTool(a),
 		searchPitfallsTool(a),
@@ -34,4 +34,16 @@ func RegisteredTools(a *app.App) []server.ServerTool {
 		touchMemoryTool(a),
 		healthCheckTool(a),
 	}
+
+	// v0.2.1: Agent Memory Watcher tools are only available when the
+	// watcher subsystem is enabled.
+	if a.MemoryWatcher != nil {
+		tools = append(tools,
+			listAdaptersTool(a),
+			syncMemoriesTool(a),
+			configureAdapterTool(a),
+		)
+	}
+
+	return tools
 }
