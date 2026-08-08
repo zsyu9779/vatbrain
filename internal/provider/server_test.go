@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -178,6 +179,103 @@ func TestServe_MethodNotFound(t *testing.T) {
 	go func() { done <- s.Serve(context.Background(), r, w, 1<<20) }()
 
 	resp := w.send(t, requestLine(t, 1, "frobnicate", map[string]any{}))
+	require.NotEmpty(t, resp.errorMessage())
+
+	w.send(t, requestLine(t, 2, MethodShutdown, map[string]any{}))
+	<-done
+}
+
+func TestServe_Prefetch_ReturnsRelevantContext(t *testing.T) {
+	deps, _ := testDeps(t)
+	s := NewServer(deps)
+
+	r, w := pipeLines(t)
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(context.Background(), r, w, 1<<20) }()
+
+	w.send(t, requestLine(t, 1, MethodInitialize, map[string]any{
+		"session_id": "sess-pref", "agent_context": "primary", "agent_identity": "coder",
+	}))
+	// 持久化一条中文记忆（显式指令 → user_confirmed）
+	w.send(t, requestLine(t, 2, MethodSyncTurn, map[string]any{
+		"session_id": "sess-pref",
+		"user_content": "记住：软路由 OpenClash 覆写脚本用 Ruby YAML 解析，不要用文本 gsub",
+	}))
+
+	// 冷 prefetch：查询与记忆相关 → 返回记忆上下文
+	resp := w.send(t, requestLine(t, 3, MethodPrefetch, map[string]any{
+		"session_id": "sess-pref", "query": "OpenClash 覆写脚本 Ruby YAML 怎么解析",
+	}))
+	require.Equal(t, "", resp.errorMessage())
+	var out prefetchResult
+	json.Unmarshal(resp.Result, &out)
+	assert.Contains(t, out.Context, "[vatbrain memory context]")
+	assert.Contains(t, out.Context, "OpenClash")
+
+	// 无关查询 → 空上下文
+	resp = w.send(t, requestLine(t, 4, MethodPrefetch, map[string]any{
+		"session_id": "sess-pref", "query": "量子计算 引力波 黑洞 弦论",
+	}))
+	json.Unmarshal(resp.Result, &out)
+	assert.Equal(t, "", out.Context)
+
+	w.send(t, requestLine(t, 5, MethodShutdown, map[string]any{}))
+	<-done
+}
+
+func TestServe_QueuePrefetch_WarmsCache(t *testing.T) {
+	deps, _ := testDeps(t)
+	s := NewServer(deps)
+
+	r, w := pipeLines(t)
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(context.Background(), r, w, 1<<20) }()
+
+	w.send(t, requestLine(t, 1, MethodInitialize, map[string]any{
+		"session_id": "sess-q", "agent_context": "primary", "agent_identity": "coder",
+	}))
+	w.send(t, requestLine(t, 2, MethodSyncTurn, map[string]any{
+		"session_id": "sess-q",
+		"user_content": "记住：MiniMax max_tokens 必须设到 8000 才能同时输出 thinking 和 text",
+	}))
+
+	// queue_prefetch 预热（后台），随后 prefetch 命中缓存
+	resp := w.send(t, requestLine(t, 3, MethodQueuePrefetch, map[string]any{
+		"session_id": "sess-q", "query": "MiniMax max_tokens thinking text",
+	}))
+	require.Equal(t, "", resp.errorMessage())
+
+	// 后台预热有竞态 → 轮询 prefetch 直到命中或超时
+	var out prefetchResult
+	found := false
+	for i := 0; i < 20; i++ {
+		resp := w.send(t, requestLine(t, 4, MethodPrefetch, map[string]any{
+			"session_id": "sess-q", "query": "MiniMax max_tokens thinking text",
+		}))
+		json.Unmarshal(resp.Result, &out)
+		if strings.Contains(out.Context, "MiniMax") {
+			found = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	assert.True(t, found, "queue_prefetch 预热后 prefetch 应能读到缓存")
+
+	w.send(t, requestLine(t, 5, MethodShutdown, map[string]any{}))
+	<-done
+}
+
+func TestServe_Prefetch_UnknownSession(t *testing.T) {
+	deps, _ := testDeps(t)
+	s := NewServer(deps)
+
+	r, w := pipeLines(t)
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(context.Background(), r, w, 1<<20) }()
+
+	resp := w.send(t, requestLine(t, 1, MethodPrefetch, map[string]any{
+		"session_id": "nope", "query": "anything",
+	}))
 	require.NotEmpty(t, resp.errorMessage())
 
 	w.send(t, requestLine(t, 2, MethodShutdown, map[string]any{}))

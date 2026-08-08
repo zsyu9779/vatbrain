@@ -37,6 +37,10 @@ logger = logging.getLogger(__name__)
 _JSONRPC = "2.0"
 _IO_TIMEOUT_S = 60.0
 _INIT_TIMEOUT_S = 30.0
+# hermes joins external prefetch on a daemon thread with an 8s timeout
+# (memory_manager._EXTERNAL_PREFETCH_TIMEOUT_S); stay under it so the
+# provider result lands before hermes gives up.
+_PREFETCH_TIMEOUT_S = 7.0
 
 
 class VatBrainMemoryProvider(MemoryProvider):
@@ -108,6 +112,40 @@ class VatBrainMemoryProvider(MemoryProvider):
             self._rpc("sync_turn", params, timeout=_IO_TIMEOUT_S)
         except Exception as exc:
             logger.warning("vatbrain: sync_turn failed (best-effort): %s", exc)
+
+    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
+        """Warm the daemon's recall cache for the next turn (fire-and-forget)."""
+        if self._proc is None or self._proc.poll() is not None:
+            return
+        params = {"session_id": session_id or self._session_id, "query": query}
+        threading.Thread(
+            target=self._background_prefetch_queue,
+            args=(params,),
+            name="vatbrain-queue-prefetch",
+            daemon=True,
+        ).start()
+
+    def _background_prefetch_queue(self, params: Dict[str, Any]) -> None:
+        try:
+            self._rpc("queue_prefetch", params, timeout=_IO_TIMEOUT_S)
+        except Exception as exc:
+            logger.debug("vatbrain: queue_prefetch failed (best-effort): %s", exc)
+
+    def prefetch(self, query: str, *, session_id: str = "") -> str:
+        """Return relevant recall text. The daemon returns a warm cache hit or
+        runs a fast synchronous retrieval; hermes wraps the text in the
+        <memory-context> fence (providers never emit the fence)."""
+        if self._proc is None or self._proc.poll() is not None:
+            return ""
+        try:
+            result = self._rpc("prefetch", {
+                "session_id": session_id or self._session_id,
+                "query": query,
+            }, timeout=_PREFETCH_TIMEOUT_S)
+            return result.get("context", "")
+        except Exception as exc:
+            logger.debug("vatbrain: prefetch failed (best-effort): %s", exc)
+            return ""
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """No tools in Phase 2; prepare_edit_context lands in Phase 5."""

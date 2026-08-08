@@ -4,13 +4,35 @@
 
 ## 项目状态
 
-- **阶段**: Hermes 集成 Phase 2 — vatbrain-provider daemon + hermes 插件 ✅ 完成（未提交）
+- **阶段**: Hermes 集成 Phase 3 — 读路径 prefetch + Pitfall 注入 ✅ 完成（未提交）；Phase 2 已提交推送
 - **语言**: Go (go 1.25.5) + Python（hermes 插件）
 - **分支**: `feature/agent-memory-watcher`（本地领先 origin 1 commit，未推送）
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点
 - **hermes 源码**: 本机 `~/.hermes/hermes-agent`（HEAD 52920747e，工作树干净）
 - **hermes 插件**: 已安装 `~/.hermes/plugins/vatbrain/` + daemon 二进制 `~/.hermes/vatbrain/bin/vatbrain-provider`
 - **战略决策（2026-08-08）**: Neo4j+pgvector 重型存储将弃用，后续只投入 SQLite 路径
+
+## 最近工作（2026-08-08）— Phase 3 读路径 prefetch + Pitfall 注入
+
+### 本次完成
+
+1. **`internal/provider/retrieve.go`**（新）：
+   - `RetrieveEpisodic`：embedder 有信号（非零向量）→ `SearchEpisodic` 余弦排序；否则 **CJK 安全 bigram Dice 系数**词法回退（`charBigrams`，中文/拉丁都适用）
+   - `RetrievePitfalls`：`SearchPitfall(ProjectID, MinWeight≥0.5)` 候选池 + 文本重叠打分 + 查询内 entity 引用 boost；confirmed/proposed 状态门待 Phase 5 状态机
+   - `FormatPrefetch`：`[vatbrain memory context]` 段落 + §6 `[Risk advisory — vatbrain]` 风险块（entity/signature/root cause/日期/trust/Fix）
+2. **server.go 扩展**：`prefetch` + `queue_prefetch` 方法；daemon 侧每 session 缓存（queue 预热后台检索、prefetch 读缓存热路径 / 冷路径同步检索）；`_PREFETCH_TIMEOUT_S=7s`（hermes join 8s 留余量）
+3. **插件扩展**：`queue_prefetch`（后台 fire-and-forget）、`prefetch`（同步返回文本，hermes manager 包 `<memory-context>` 栅栏——provider 不自带）
+4. **验收**：
+   - 冒烟脚本覆盖 prefetch：返回含 "clawfeed-push-v3.py" 的记忆上下文 ✅
+   - **冷 prefetch p95=24.4ms**（含进程 spawn+initialize；真实热路径为 warm cache µs 级）——远低于 200ms 验收线 ✅
+   - `<memory-context>` 栅栏由 hermes `build_memory_context_block`（turn_context.py:78）包——已验证 manager 职责 ✅
+   - `go test ./internal/...` 20/20 全绿（provider 新增 retrieve/prefetch 中文用例）
+
+### 当前状态
+
+- 本地领先 origin 1 commit（Phase 3）未提交未推送
+- 真实 `~/.hermes/plugins/vatbrain/` + `~/.hermes/vatbrain/bin/` 已同步最新（prefetch 版）
+- `~/.hermes/config.yaml` 仍未激活（待用户授权）
 
 ## 最近工作（2026-08-08）— Phase 2 vatbrain-provider daemon + hermes 插件
 
@@ -38,10 +60,10 @@
 
 ## 下一步
 
-1. 提交 Phase 2（独立 commit）→ 推送
-2. **待用户授权**：激活 `~/.hermes/config.yaml` `memory.provider: vatbrain`（手动或授权我做），下次 hermes 启动验证 activated 日志
-3. Phase 3 — 读路径：daemon `prefetch`/`queue_prefetch` + Pitfall 注入（hermes manager 负责 `<memory-context>` 栅栏，provider 不自带）
-4. Phase 4 — 生命周期：`on_session_end`/`on_memory_write`/`on_session_switch`
+1. 提交推送 Phase 3（独立 commit）
+2. **待用户授权**：激活 `~/.hermes/config.yaml` `memory.provider: vatbrain`（手动或授权我做），下次 hermes 启动验证 activated 日志 + `<memory-context>` 注入
+3. Phase 4 — 生命周期：`on_session_end`（→整合）/`on_memory_write`（镜像，source=user_explicit）/`on_session_switch`（重绑）
+4. Phase 5 — Pitfall Workbench（状态机）+ v0.3 风险注入；Phase 6 — 评测
 
 ## 已知问题
 

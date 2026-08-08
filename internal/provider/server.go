@@ -20,10 +20,12 @@ import (
 // spawns this binary and drives it line-by-line (one JSON-RPC 2.0 request
 // per line, no Content-Length framing).
 const (
-	MethodInitialize = "initialize"
-	MethodSyncTurn   = "sync_turn"
-	MethodPing       = "ping"
-	MethodShutdown   = "shutdown"
+	MethodInitialize      = "initialize"
+	MethodSyncTurn        = "sync_turn"
+	MethodPrefetch        = "prefetch"
+	MethodQueuePrefetch   = "queue_prefetch"
+	MethodPing            = "ping"
+	MethodShutdown        = "shutdown"
 )
 
 // sessionState tracks the per-session binding established by initialize.
@@ -43,16 +45,23 @@ type Server struct {
 	mu          sync.Mutex
 	shutdownC   chan struct{}
 	writeTimeout time.Duration // per-sync_turn deadline; 0 disables
+
+	// prefetchCache holds warm recall results per session, filled by
+	// queue_prefetch (turn N) and consumed by prefetch (turn N+1) so the
+	// hermes hot path reads a cache instead of blocking on retrieval.
+	prefetchCache map[string]string
+	prefetchMu    sync.Mutex
 }
 
 // NewServer creates a JSON-RPC server bound to the given write-pipeline deps.
 func NewServer(deps core.WriteDeps) *Server {
 	return &Server{
-		deps:         deps,
-		deriver:      DeriveWriteEvent,
-		sessions:     make(map[string]*sessionState),
-		shutdownC:    make(chan struct{}),
-		writeTimeout: 30 * time.Second,
+		deps:          deps,
+		deriver:       DeriveWriteEvent,
+		sessions:      make(map[string]*sessionState),
+		shutdownC:     make(chan struct{}),
+		writeTimeout:  30 * time.Second,
+		prefetchCache: make(map[string]string),
 	}
 }
 
@@ -150,6 +159,10 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
 		return s.handleInitialize(req)
 	case MethodSyncTurn:
 		return s.handleSyncTurn(ctx, req)
+	case MethodPrefetch:
+		return s.handlePrefetch(ctx, req)
+	case MethodQueuePrefetch:
+		return s.handleQueuePrefetch(ctx, req)
 	case MethodPing:
 		return newResponse(req.ID, map[string]bool{"pong": true})
 	case MethodShutdown:
@@ -272,6 +285,93 @@ func (s *Server) handleSyncTurn(ctx context.Context, req rpcRequest) rpcResponse
 		out.MemoryID = ""
 	}
 	return newResponse(req.ID, out)
+}
+
+// prefetchParams carries the query for a recall.
+type prefetchParams struct {
+	SessionID string `json:"session_id"`
+	Query     string `json:"query"`
+}
+
+type prefetchResult struct {
+	// Context is plain text — the hermes manager wraps it in the
+	// <memory-context> fence (providers never emit the fence).
+	Context string `json:"context"`
+}
+
+// handleQueuePrefetch warms the per-session recall cache in the background so
+// the next turn's prefetch reads a cache instead of blocking on retrieval.
+func (s *Server) handleQueuePrefetch(ctx context.Context, req rpcRequest) rpcResponse {
+	var p prefetchParams
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return newErrorResponse(req.ID, -32602, fmt.Sprintf("invalid queue_prefetch params: %v", err))
+	}
+	session, ok := s.sessionFor(p.SessionID)
+	if !ok {
+		return newErrorResponse(req.ID, -32002, "unknown session: call initialize first")
+	}
+
+	go s.warmPrefetch(p.SessionID, session.projectID, p.Query)
+	return newResponse(req.ID, prefetchResult{Context: ""})
+}
+
+// handlePrefetch returns the cached recall for the session, or runs a
+// synchronous retrieval when the cache is cold. The hermes hot path calls
+// this under an 8s join budget; a warm cache keeps it well under 200ms.
+func (s *Server) handlePrefetch(ctx context.Context, req rpcRequest) rpcResponse {
+	var p prefetchParams
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return newErrorResponse(req.ID, -32602, fmt.Sprintf("invalid prefetch params: %v", err))
+	}
+	session, ok := s.sessionFor(p.SessionID)
+	if !ok {
+		return newErrorResponse(req.ID, -32002, "unknown session: call initialize first")
+	}
+
+	if text, ok := s.takePrefetch(p.SessionID); ok {
+		return newResponse(req.ID, prefetchResult{Context: text})
+	}
+
+	text := s.buildPrefetch(context.Background(), session.projectID, p.Query)
+	return newResponse(req.ID, prefetchResult{Context: text})
+}
+
+// warmPrefetch retrieves and formats recall, then caches it for the session.
+func (s *Server) warmPrefetch(sessionID, projectID, query string) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.writeTimeout)
+	defer cancel()
+	text := s.buildPrefetch(ctx, projectID, query)
+
+	s.prefetchMu.Lock()
+	defer s.prefetchMu.Unlock()
+	if text != "" {
+		s.prefetchCache[sessionID] = text
+	}
+}
+
+// takePrefetch consumes the cached recall for a session, if any.
+func (s *Server) takePrefetch(sessionID string) (string, bool) {
+	s.prefetchMu.Lock()
+	defer s.prefetchMu.Unlock()
+	text, ok := s.prefetchCache[sessionID]
+	delete(s.prefetchCache, sessionID)
+	return text, ok
+}
+
+// buildPrefetch retrieves episodes + pitfalls for a query and formats them.
+func (s *Server) buildPrefetch(ctx context.Context, projectID, query string) string {
+	if strings.TrimSpace(query) == "" {
+		return ""
+	}
+	episodes, err := RetrieveEpisodic(ctx, s.deps, projectID, query, 0)
+	if err != nil {
+		slog.Warn("provider: prefetch episodic retrieval failed", "err", err)
+	}
+	pitfalls, err := RetrievePitfalls(ctx, s.deps, projectID, query, 0)
+	if err != nil {
+		slog.Warn("provider: prefetch pitfall retrieval failed", "err", err)
+	}
+	return FormatPrefetch(episodes, pitfalls)
 }
 
 func (s *Server) sessionFor(sessionID string) (*sessionState, bool) {

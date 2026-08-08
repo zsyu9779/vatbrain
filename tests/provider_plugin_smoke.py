@@ -62,6 +62,16 @@ def main() -> int:
     p.sync_turn("不对，evaluator 输出字段是 total_score 不是 overall_score", "好的")
     p.sync_turn("记住：ClawFeed 推送必须用 clawfeed-push-v3.py", "记住了")
     time.sleep(3)
+
+    # Phase 3: prefetch returns the ingested memory as plain text (hermes
+    # wraps it in <memory-context>; the provider never emits the fence).
+    p.queue_prefetch("ClawFeed 推送用什么脚本")
+    time.sleep(1)
+    ctx = p.prefetch("ClawFeed 推送用什么脚本", session_id="sess-smoke")
+    assert "[vatbrain memory context]" in ctx, f"prefetch missing header: {ctx!r}"
+    assert "clawfeed-push-v3.py" in ctx, f"prefetch missing memory: {ctx!r}"
+    print("[vatbrain] prefetch context:", repr(ctx[:120]))
+
     p.shutdown()
 
     db = os.path.join(home, "vatbrain", "vatbrain.db")
