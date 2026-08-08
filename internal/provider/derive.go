@@ -6,6 +6,8 @@
 package provider
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -83,4 +85,11 @@ func detectCorrection(text string) bool {
 		return false
 	}
 	return correctionRe.MatchString(text)
+}
+
+// entryHash returns the first 8 hex chars of the SHA-256 digest of content —
+// the stable per-entry identifier embedded in snapshot URIs.
+func entryHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("%x", sum)[:8]
 }
