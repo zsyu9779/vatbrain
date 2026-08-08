@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -11,8 +10,6 @@ import (
 	"github.com/vatbrain/vatbrain/internal/app"
 	"github.com/vatbrain/vatbrain/internal/core"
 	"github.com/vatbrain/vatbrain/internal/models"
-	"github.com/vatbrain/vatbrain/internal/store"
-	"github.com/vatbrain/vatbrain/internal/vector"
 )
 
 func writeMemoryTool(a *app.App) server.ServerTool {
@@ -53,143 +50,36 @@ func writeMemoryTool(a *app.App) server.ServerTool {
 			userConfirmed := req.GetBool("user_confirmed", false)
 			isCorrection := req.GetBool("is_correction", false)
 
-			// Fetch working-memory cycles from in-process buffer.
-			summaries := a.WorkingMemory.GetAll(projectID)
-			workingMemory := make([]core.WorkingMemoryCycle, len(summaries))
-			for i, s := range summaries {
-				workingMemory[i] = core.WorkingMemoryCycle{Summary: s}
+			// Shared write pipeline: significance gate → embedding →
+			// pattern-separation merge → persistence → link-on-write. The
+			// hermes provider daemon routes through the same code.
+			deps := core.WriteDeps{
+				Store:       a.Store,
+				Gate:        a.SignificanceGate,
+				PatternSep:  a.PatternSeparation,
+				WeightDecay: a.WeightDecay,
+				Embedder:    a.Embedder,
+				WorkingMem:  a.WorkingMemory,
 			}
-
-			// Evaluate significance gate.
 			event := core.WriteEvent{
 				Summary:       summary,
 				UserConfirmed: userConfirmed,
 				IsCorrection:  isCorrection,
 			}
-			gateResult := a.SignificanceGate.Evaluate(ctx, event, workingMemory)
-
-			if !gateResult.ShouldPersist {
-				resp, jErr := mcp.NewToolResultJSON(writeMemoryOutput{
-					Persisted:  false,
-					GateReason: gateResult.Reason,
-				})
-				if jErr != nil {
-					return mcp.NewToolResultError(jErr.Error()), nil
-				}
-				return resp, nil
+			res, err := core.WriteMemory(ctx, deps, event,
+				projectID, language, entityID, models.TaskType(taskType))
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("write memory failed: %v", err)), nil
 			}
 
-			// Generate embedding.
-			embedding, embErr := a.Embedder.Embed(ctx, summary)
-			if embErr != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("embedding failed: %v", embErr)), nil
+			out := writeMemoryOutput{
+				MemoryID:    res.MemoryID,
+				Persisted:   res.Persisted,
+				GateReason:  res.GateReason,
+				MergeAction: string(res.MergeAction),
+				Weight:      res.Weight,
 			}
-
-			// Search for similar existing memories via Store.
-			candidates, simErr := a.Store.SearchEpisodic(ctx, store.EpisodicSearchRequest{
-				ProjectID: projectID,
-				Embedding: vector.Float32To64(embedding),
-				Limit:     5,
-			})
-			if simErr != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("similarity search failed: %v", simErr)), nil
-			}
-
-			newCtx := core.SeparationContext{
-				ProjectID: projectID,
-				Language:  language,
-				EntityID:  entityID,
-			}
-
-			emb64 := vector.Float32To64(embedding)
-
-			// Check each similar candidate for merge.
-			for _, candidate := range candidates {
-				if len(candidate.ContextVector) == 0 {
-					continue
-				}
-
-				candEmb := vector.Float32To64(candidate.ContextVector)
-
-				candidateCtx := core.SeparationContext{
-					ProjectID: candidate.ProjectID,
-					Language:  candidate.Language,
-					EntityID:  candidate.EntityGroup,
-				}
-
-				sepResult := a.PatternSeparation.Check(embedding, candidate.ContextVector, newCtx, candidateCtx)
-				if !sepResult.ShouldMerge {
-					continue
-				}
-
-				// Merge: update existing memory.
-				existing, gErr := a.Store.GetEpisodic(ctx, candidate.ID)
-				if gErr != nil {
-					continue
-				}
-
-				now := time.Now()
-				sim := vector.CosineSimilarity(emb64, candEmb)
-				newWeight := ClampWeight(sim + 0.1)
-
-				existing.Summary = existing.Summary + "\n" + summary
-				existing.Weight = newWeight
-				existing.LastAccessedAt = &now
-
-				if uErr := a.Store.WriteEpisodic(ctx, existing); uErr != nil {
-					return mcp.NewToolResultError(fmt.Sprintf("merge update failed: %v", uErr)), nil
-				}
-
-				resp, jErr := mcp.NewToolResultJSON(writeMemoryOutput{
-					MemoryID:    candidate.ID,
-					Persisted:   true,
-					GateReason:  gateResult.Reason,
-					MergeAction: string(models.MergeActionUpdatedExisting),
-					Weight:      newWeight,
-				})
-				if jErr != nil {
-					return mcp.NewToolResultError(jErr.Error()), nil
-				}
-				return resp, nil
-			}
-
-			// No merge — create new episodic memory.
-			memoryID := uuid.New()
-			now := time.Now()
-			effFreq, weight := a.WeightDecay.ComputeFull([]time.Time{now}, now, now)
-
-			mem := &models.EpisodicMemory{
-				ID:                 memoryID,
-				ProjectID:          projectID,
-				Language:           language,
-				TaskType:           models.TaskType(taskType),
-				Summary:            summary,
-				SourceType:         models.SourceTypeLLM,
-				TrustLevel:         models.DefaultTrustLevel,
-				Weight:             weight,
-				EffectiveFrequency: effFreq,
-				CreatedAt:          now,
-				EntityGroup:        entityID,
-				ContextVector:      embedding,
-			}
-
-			if cErr := a.Store.WriteEpisodic(ctx, mem); cErr != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("create memory failed: %v", cErr)), nil
-			}
-
-			// Link to related memories.
-			core.LinkOnWrite(ctx, a.Embedder, a.Store, memoryID, summary, projectID, entityID, models.TaskType(taskType))
-
-			// Push to working-memory cycles.
-			a.WorkingMemory.Push(projectID, summary)
-
-			resp, jErr := mcp.NewToolResultJSON(writeMemoryOutput{
-				MemoryID:    memoryID,
-				Persisted:   true,
-				GateReason:  gateResult.Reason,
-				MergeAction: string(models.MergeActionCreatedNew),
-				Weight:      weight,
-			})
+			resp, jErr := mcp.NewToolResultJSON(out)
 			if jErr != nil {
 				return mcp.NewToolResultError(jErr.Error()), nil
 			}

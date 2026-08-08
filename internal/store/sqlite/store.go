@@ -79,13 +79,18 @@ func (s *Store) WriteEpisodic(_ context.Context, mem *models.EpisodicMemory) err
 		obsoleted = mem.ObsoletedAt.UTC().Format(time.RFC3339)
 	}
 
+	isCorrection := 0
+	if mem.IsCorrection {
+		isCorrection = 1
+	}
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO episodic_memories
 			(id, project_id, language, task_type, summary, source_type,
 			 trust_level, weight, effective_frequency, entity_group,
-			 context_vector, full_snapshot_uri,
+			 context_vector, full_snapshot_uri, is_correction,
 			 created_at, last_accessed_at, obsoleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		mem.ID.String(),
 		mem.ProjectID,
@@ -99,6 +104,7 @@ func (s *Store) WriteEpisodic(_ context.Context, mem *models.EpisodicMemory) err
 		mem.EntityGroup,
 		cvBlob,
 		mem.FullSnapshotURI,
+		isCorrection,
 		mem.CreatedAt.UTC().Format(time.RFC3339),
 		la.UTC().Format(time.RFC3339),
 		obsoleted,
@@ -114,7 +120,7 @@ func (s *Store) GetEpisodic(_ context.Context, id uuid.UUID) (*models.EpisodicMe
 	row := s.db.QueryRow(`
 		SELECT id, project_id, language, task_type, summary, source_type,
 		       trust_level, weight, effective_frequency, entity_group,
-		       context_vector, full_snapshot_uri,
+		       context_vector, full_snapshot_uri, is_correction,
 		       created_at, last_accessed_at, obsoleted_at
 		FROM episodic_memories WHERE id = ?
 	`, id.String())
@@ -405,17 +411,19 @@ func scanEpisodic(row *sql.Row) (*models.EpisodicMemory, error) {
 	var createdAtStr, laStr string
 	var obsoletedStr *string
 	var cvBlob []byte
+	var isCorrection int
 
 	err := row.Scan(
 		&idStr, &m.ProjectID, &m.Language, &taskTypeStr, &m.Summary, &sourceTypeStr,
 		&m.TrustLevel, &m.Weight, &m.EffectiveFrequency, &m.EntityGroup,
-		&cvBlob, &m.FullSnapshotURI,
+		&cvBlob, &m.FullSnapshotURI, &isCorrection,
 		&createdAtStr, &laStr, &obsoletedStr,
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	m.IsCorrection = isCorrection != 0
 	m.ID, _ = uuid.Parse(idStr)
 	m.TaskType = models.TaskType(taskTypeStr)
 	m.SourceType = models.SourceType(sourceTypeStr)
@@ -475,16 +483,18 @@ func scanEpisodicRows(rows *sql.Rows) ([]models.EpisodicMemory, error) {
 		var createdAtStr, laStr string
 		var obsoletedStr *string
 		var cvBlob []byte
+		var isCorrection int
 
 		err := rows.Scan(
 			&idStr, &m.ProjectID, &m.Language, &taskTypeStr, &m.Summary, &sourceTypeStr,
 			&m.TrustLevel, &m.Weight, &m.EffectiveFrequency, &m.EntityGroup,
-			&cvBlob, &m.FullSnapshotURI,
+			&cvBlob, &m.FullSnapshotURI, &isCorrection,
 			&createdAtStr, &laStr, &obsoletedStr,
 		)
 		if err != nil {
 			return nil, err
 		}
+		m.IsCorrection = isCorrection != 0
 		m.ID, _ = uuid.Parse(idStr)
 		m.TaskType = models.TaskType(taskTypeStr)
 		m.SourceType = models.SourceType(sourceTypeStr)

@@ -26,6 +26,10 @@ type EpisodicMemory struct {
 	EmbeddingID        string     `json:"embedding_id"`
 	ContextVector      []float32  `json:"context_vector,omitempty"`
 	FullSnapshotURI    string     `json:"full_snapshot_uri"`
+	// IsCorrection marks a memory that records a user correction of prior
+	// information (prediction-error signal). Persisted so corrections are
+	// observable in the graph, not just used by the significance gate.
+	IsCorrection bool `json:"is_correction"`
 }
 
 // PrecedesEdge represents a [:PRECEDES] relationship between episodic memories.

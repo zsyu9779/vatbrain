@@ -2,6 +2,12 @@
 vatbrain
 vatbrain-mcp
 
+# hermes memory-provider plugin source (directory name collides with the
+# binary pattern above — un-ignore it)
+!plugins/vatbrain/
+!plugins/vatbrain/**
+
+
 # IDE
 .idea/
 .vscode/

@@ -61,6 +61,10 @@ func (s *Store) setupSchema(ctx context.Context) error {
 // into pgvector (best-effort).
 func (s *Store) WriteEpisodic(ctx context.Context, mem *models.EpisodicMemory) error {
 	_, err := s.neo4j.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
+		isCorrection := false
+		if mem.IsCorrection {
+			isCorrection = true
+		}
 		params := map[string]any{
 			"id":              mem.ID.String(),
 			"projectID":       mem.ProjectID,
@@ -75,6 +79,7 @@ func (s *Store) WriteEpisodic(ctx context.Context, mem *models.EpisodicMemory) e
 			"entityGroup":     mem.EntityGroup,
 			"embeddingID":     mem.EmbeddingID,
 			"fullSnapshotURI": mem.FullSnapshotURI,
+			"isCorrection":    isCorrection,
 		}
 		if mem.LastAccessedAt != nil {
 			params["lastAccessedAt"] = *mem.LastAccessedAt
@@ -103,7 +108,8 @@ func (s *Store) WriteEpisodic(ctx context.Context, mem *models.EpisodicMemory) e
 				obsoleted_at: $obsoletedAt,
 				entity_group: $entityGroup,
 				embedding_id: $embeddingID,
-				full_snapshot_uri: $fullSnapshotURI
+				full_snapshot_uri: $fullSnapshotURI,
+				is_correction: $isCorrection
 			})
 		`, params)
 		return nil, err
@@ -824,6 +830,7 @@ func scanEpisodic(r *neodriver.Record, prefix string) (*models.EpisodicMemory, e
 	weight, _ := node.Props["weight"].(float64)
 	effFreq, _ := node.Props["effective_frequency"].(float64)
 	createdAt, _ := node.Props["created_at"].(time.Time)
+	isCorrection, _ := node.Props["is_correction"].(bool)
 
 	mem := &models.EpisodicMemory{
 		ID:                 pid,
@@ -839,6 +846,7 @@ func scanEpisodic(r *neodriver.Record, prefix string) (*models.EpisodicMemory, e
 		EntityGroup:        propStr(node, "entity_group"),
 		EmbeddingID:        propStr(node, "embedding_id"),
 		FullSnapshotURI:    propStr(node, "full_snapshot_uri"),
+		IsCorrection:       isCorrection,
 	}
 
 	// Nullable fields: absent or nil in Props → leave as nil.

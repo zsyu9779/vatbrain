@@ -1,12 +1,10 @@
 package mcp
 
-// ClampWeight ensures the weight stays in [0, 1].
+import "github.com/vatbrain/vatbrain/internal/core"
+
+// ClampWeight ensures the weight stays in [0, 1]. Re-exported from core so
+// existing MCP callers keep compiling; the canonical implementation lives in
+// the shared write pipeline (core.WriteMemory).
 func ClampWeight(w float64) float64 {
-	if w < 0 {
-		return 0
-	}
-	if w > 1 {
-		return 1
-	}
-	return w
+	return core.ClampWeight(w)
 }

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 const schemaSQL = `
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS episodic_memories (
     entity_group TEXT DEFAULT '',
     context_vector BLOB DEFAULT NULL,
     full_snapshot_uri TEXT DEFAULT '',
+    is_correction INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     last_accessed_at TEXT,
     obsoleted_at TEXT
@@ -111,11 +113,28 @@ CREATE INDEX IF NOT EXISTS idx_pitfall_edges_to ON pitfall_edges(to_id, edge_typ
 `
 
 func migrate(db *sql.DB) error {
-	_, err := db.Exec(schemaSQL)
-	if err != nil {
+	if _, err := db.Exec(schemaSQL); err != nil {
 		return fmt.Errorf("sqlite schema: %w", err)
 	}
+
+	// Backfill for databases created before is_correction existed. SQLite
+	// errors on a duplicate ALTER, so tolerate it as "already migrated".
+	if _, err := db.Exec(`ALTER TABLE episodic_memories
+		ADD COLUMN is_correction INTEGER DEFAULT 0`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("sqlite migrate is_correction: %w", err)
+	}
+
 	return nil
+}
+
+// isDuplicateColumnErr reports whether err is SQLite's "duplicate column name"
+// error, which is expected when the column already exists.
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	// modernc.org/sqlite returns errors containing the SQLite message.
+	return strings.Contains(err.Error(), "duplicate column name")
 }
 
 func enableWAL(db *sql.DB) error {

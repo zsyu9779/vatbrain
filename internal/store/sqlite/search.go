@@ -69,7 +69,7 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 	query := fmt.Sprintf(`
 		SELECT id, project_id, language, task_type, summary, source_type,
 		       trust_level, weight, effective_frequency, entity_group,
-		       context_vector, full_snapshot_uri,
+		       context_vector, full_snapshot_uri, is_correction,
 		       created_at, last_accessed_at, obsoleted_at
 		FROM episodic_memories
 		WHERE %s

@@ -1,0 +1,198 @@
+"""vatbrain — hermes MemoryProvider plugin (one-way bridge, D4).
+
+Spawns the ``vatbrain-provider`` Go daemon (stdio JSON-RPC) and mirrors hermes
+turns into the VatBrain graph. hermes → vatbrain only; vatbrain never writes
+back to hermes (D4). The provider contributes no tools and no system-prompt
+block (D5) — per-turn recall flows through the prefetch channel (Phase 3).
+
+Design notes (verified against hermes memory_manager.py):
+- hermes serialises sync_turn on a single FIFO worker, so each call here
+  spawns a short-lived daemon thread; a lock guards the daemon's stdin/stdout
+  so requests stay serialised even if two threads race.
+- Non-``primary`` agent_context (subagent/cron/flush) must skip writes — the
+  daemon enforces this too; the plugin short-circuits before sending.
+
+Configuration
+-------------
+VATBRAIN_PROVIDER_BIN — path to the vatbrain-provider binary (default:
+``shutil.which("vatbrain-provider")``, then ``$HERMES_HOME/vatbrain/bin/``).
+The daemon keeps its SQLite DB under ``$HERMES_HOME/vatbrain/vatbrain.db``.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import select
+import shutil
+import subprocess
+import threading
+from typing import Any, Dict, List, Optional
+
+from agent.memory_provider import MemoryProvider
+
+logger = logging.getLogger(__name__)
+
+_JSONRPC = "2.0"
+_IO_TIMEOUT_S = 60.0
+_INIT_TIMEOUT_S = 30.0
+
+
+class VatBrainMemoryProvider(MemoryProvider):
+    """hermes MemoryProvider that mirrors turns into VatBrain via stdio JSON-RPC."""
+
+    @property
+    def name(self) -> str:
+        return "vatbrain"
+
+    # -- Core lifecycle ----------------------------------------------------
+
+    def is_available(self) -> bool:
+        """True when the vatbrain-provider binary is resolvable. No network."""
+        return self._resolve_binary() is not None
+
+    def initialize(self, session_id: str, **kwargs: Any) -> None:
+        self._session_id = session_id
+        self._hermes_home = kwargs.get("hermes_home", "") or os.getenv("HERMES_HOME", "")
+        self._agent_context = kwargs.get("agent_context", "primary")
+        self._agent_identity = kwargs.get("agent_identity", "") or "hermes"
+        self._platform = kwargs.get("platform", "cli")
+
+        self._io_lock = threading.Lock()
+        self._proc: Optional[subprocess.Popen] = None
+        self._spawn_lock = threading.Lock()
+        self._binary = self._resolve_binary()
+        if self._binary is None:
+            logger.warning("vatbrain: vatbrain-provider binary not found — provider inactive")
+            return
+
+        try:
+            self._spawn()
+            self._rpc("initialize", {
+                "session_id": session_id,
+                "hermes_home": self._hermes_home,
+                "platform": self._platform,
+                "agent_context": self._agent_context,
+                "agent_identity": self._agent_identity,
+            }, timeout=_INIT_TIMEOUT_S)
+            logger.info("vatbrain: provider initialized (session=%s, project=%s)",
+                        session_id, self._agent_identity)
+        except Exception as exc:  # best-effort — never break agent init
+            logger.warning("vatbrain: initialize failed: %s", exc)
+            self._shutdown_proc()
+
+    def sync_turn(self, user_content: str, assistant_content: str, *,
+                  session_id: str = "", messages: Optional[List[Dict[str, Any]]] = None) -> None:
+        """Mirror a completed turn to the daemon in the background."""
+        if self._agent_context not in ("", "primary"):
+            return  # non-primary contexts must not write (hermes contract)
+        if self._proc is None or self._proc.poll() is not None:
+            return  # daemon not spawned or already exited
+
+        params = {
+            "session_id": session_id or self._session_id,
+            "user_content": user_content,
+            "assistant_content": assistant_content,
+            "agent_context": self._agent_context,
+        }
+        threading.Thread(
+            target=self._background_sync,
+            args=(params,),
+            name="vatbrain-sync",
+            daemon=True,
+        ).start()
+
+    def _background_sync(self, params: Dict[str, Any]) -> None:
+        try:
+            self._rpc("sync_turn", params, timeout=_IO_TIMEOUT_S)
+        except Exception as exc:
+            logger.warning("vatbrain: sync_turn failed (best-effort): %s", exc)
+
+    def get_tool_schemas(self) -> List[Dict[str, Any]]:
+        """No tools in Phase 2; prepare_edit_context lands in Phase 5."""
+        return []
+
+    def system_prompt_block(self) -> str:
+        """Empty — vatbrain recall flows through prefetch, not the stable block."""
+        return ""
+
+    def shutdown(self) -> None:
+        self._shutdown_proc()
+
+    # -- Internal ----------------------------------------------------------
+
+    def _resolve_binary(self) -> Optional[str]:
+        env = os.getenv("VATBRAIN_PROVIDER_BIN", "").strip()
+        if env:
+            return env if os.path.exists(env) else None
+        on_path = shutil.which("vatbrain-provider")
+        if on_path:
+            return on_path
+        home = self._hermes_home or os.getenv("HERMES_HOME", "")
+        if home:
+            candidate = os.path.join(home, "vatbrain", "bin", "vatbrain-provider")
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
+    def _spawn(self) -> None:
+        with self._spawn_lock:
+            if self._proc and self._proc.poll() is None:
+                return
+            data_dir = os.path.join(self._hermes_home or os.path.expanduser("~/.hermes"), "vatbrain")
+            self._proc = subprocess.Popen(
+                [self._binary, "--store", "sqlite", "--data", data_dir],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+            logger.info("vatbrain: spawned vatbrain-provider pid=%s data=%s",
+                        self._proc.pid, data_dir)
+
+    def _rpc(self, method: str, params: Dict[str, Any], timeout: float = _IO_TIMEOUT_S) -> Dict[str, Any]:
+        """Send one line-delimited JSON-RPC request and read its response."""
+        proc = self._proc
+        if proc is None:
+            raise RuntimeError("vatbrain: daemon not spawned")
+
+        req = {"jsonrpc": _JSONRPC, "id": 1, "method": method, "params": params}
+        with self._io_lock:
+            proc.stdin.write(json.dumps(req) + "\n")
+            proc.stdin.flush()
+
+            ready, _, _ = select.select([proc.stdout], [], [], timeout)
+            if not ready:
+                raise TimeoutError("vatbrain: no response from daemon within %ss" % timeout)
+            line = proc.stdout.readline()
+            if not line:
+                raise RuntimeError("vatbrain: daemon closed stdout")
+            resp = json.loads(line)
+        if resp.get("error"):
+            raise RuntimeError("vatbrain: rpc error: %s" % resp["error"])
+        return resp.get("result") or {}
+
+    def _shutdown_proc(self) -> None:
+        proc = self._proc
+        self._proc = None
+        if proc is None:
+            return
+        try:
+            self._rpc("shutdown", {}, timeout=5.0)
+        except Exception:
+            pass  # best-effort; terminate below anyway
+        try:
+            proc.wait(timeout=3.0)
+        except Exception:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2.0)
+            except Exception:
+                proc.kill()
+
+
+def register(ctx) -> None:
+    """Register vatbrain as a memory provider plugin."""
+    ctx.register_memory_provider(VatBrainMemoryProvider())
