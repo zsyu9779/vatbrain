@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
 	"github.com/vatbrain/vatbrain/internal/vector"
@@ -245,7 +246,7 @@ func (s *Store) UpdatePitfallWeight(ctx context.Context, id uuid.UUID, weight fl
 		_, runErr := tx.Run(ctx,
 			`MATCH (p:PitfallMemory {id: $id})
 			 SET p.weight = $weight, p.updated_at = $now`,
-			map[string]any{"id": id.String(), "weight": weight, "now": time.Now()})
+			map[string]any{"id": id.String(), "weight": weight, "now": time.Now().UTC()})
 		return nil, runErr
 	})
 	if err != nil {
@@ -260,7 +261,7 @@ func (s *Store) MarkPitfallObsolete(ctx context.Context, id uuid.UUID, at time.T
 		_, runErr := tx.Run(ctx,
 			`MATCH (p:PitfallMemory {id: $id})
 			 SET p.obsoleted_at = $at, p.updated_at = $now`,
-			map[string]any{"id": id.String(), "at": at, "now": time.Now()})
+			map[string]any{"id": id.String(), "at": at, "now": time.Now().UTC()})
 		return nil, runErr
 	})
 	if err != nil {
@@ -286,31 +287,29 @@ func (s *Store) UpdateSemanticWeight(ctx context.Context, id uuid.UUID, weight, 
 
 // scanPitfall maps a Neo4j record to a PitfallMemory.
 func scanPitfall(r *neodriver.Record, prefix string) (*models.PitfallMemory, error) {
-	key := func(field string) string { return prefix + "." + field }
+	node, _, _ := neodriver.GetRecordValue[dbtype.Node](r, prefix)
 
-	idStr, _, _ := neodriver.GetRecordValue[string](r, key("id"))
-	entityID, _, _ := neodriver.GetRecordValue[string](r, key("entity_id"))
-	entityType, _, _ := neodriver.GetRecordValue[string](r, key("entity_type"))
-	projectID, _, _ := neodriver.GetRecordValue[string](r, key("project_id"))
-	language, _, _ := neodriver.GetRecordValue[string](r, key("language"))
-	signature, _, _ := neodriver.GetRecordValue[string](r, key("signature"))
-	sigEmbID, _, _ := neodriver.GetRecordValue[string](r, key("signature_embedding_id"))
-	rootCause, _, _ := neodriver.GetRecordValue[string](r, key("root_cause_category"))
-	fixStrategy, _, _ := neodriver.GetRecordValue[string](r, key("fix_strategy"))
-	wasUserCorrected, _, _ := neodriver.GetRecordValue[bool](r, key("was_user_corrected"))
-	occurrenceCount, _, _ := neodriver.GetRecordValue[int64](r, key("occurrence_count"))
-	lastOccurredAt, loaNil, _ := neodriver.GetRecordValue[time.Time](r, key("last_occurred_at"))
-	sourceType, _, _ := neodriver.GetRecordValue[string](r, key("source_type"))
-	trustLevel, _, _ := neodriver.GetRecordValue[int64](r, key("trust_level"))
-	weight, _, _ := neodriver.GetRecordValue[float64](r, key("weight"))
-	createdAt, _, _ := neodriver.GetRecordValue[time.Time](r, key("created_at"))
-	updatedAt, _, _ := neodriver.GetRecordValue[time.Time](r, key("updated_at"))
-	obsoletedAt, obNil, _ := neodriver.GetRecordValue[time.Time](r, key("obsoleted_at"))
-
+	idStr, _ := node.Props["id"].(string)
 	pid, err := uuid.Parse(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("neo4jpg: parse pitfall id %q: %w", idStr, err)
 	}
+
+	entityID, _ := node.Props["entity_id"].(string)
+	entityType, _ := node.Props["entity_type"].(string)
+	projectID, _ := node.Props["project_id"].(string)
+	language, _ := node.Props["language"].(string)
+	signature, _ := node.Props["signature"].(string)
+	sigEmbID, _ := node.Props["signature_embedding_id"].(string)
+	rootCause, _ := node.Props["root_cause_category"].(string)
+	fixStrategy, _ := node.Props["fix_strategy"].(string)
+	wasUserCorrected, _ := node.Props["was_user_corrected"].(bool)
+	occurrenceCount, _ := node.Props["occurrence_count"].(int64)
+	sourceType, _ := node.Props["source_type"].(string)
+	trustLevel, _ := node.Props["trust_level"].(int64)
+	weight, _ := node.Props["weight"].(float64)
+	createdAt, _ := node.Props["created_at"].(time.Time)
+	updatedAt, _ := node.Props["updated_at"].(time.Time)
 
 	p := &models.PitfallMemory{
 		ID:                   pid,
@@ -330,18 +329,23 @@ func scanPitfall(r *neodriver.Record, prefix string) (*models.PitfallMemory, err
 		CreatedAt:            createdAt,
 		UpdatedAt:            updatedAt,
 	}
-	if !loaNil {
-		p.LastOccurredAt = &lastOccurredAt
+
+	if v, ok := node.Props["last_occurred_at"]; ok && v != nil {
+		t, _ := v.(time.Time)
+		p.LastOccurredAt = &t
 	}
-	if !obNil {
-		p.ObsoletedAt = &obsoletedAt
+	if v, ok := node.Props["obsoleted_at"]; ok && v != nil {
+		t, _ := v.(time.Time)
+		p.ObsoletedAt = &t
 	}
 
-	if srcList, _, _ := neodriver.GetRecordValue[[]any](r, key("source_episodic_ids")); srcList != nil {
-		for _, v := range srcList {
-			if s, ok := v.(string); ok {
-				if uid, err := uuid.Parse(s); err == nil {
-					p.SourceEpisodicIDs = append(p.SourceEpisodicIDs, uid)
+	if raw, ok := node.Props["source_episodic_ids"]; ok && raw != nil {
+		if srcList, ok := raw.([]any); ok {
+			for _, v := range srcList {
+				if s, ok := v.(string); ok {
+					if uid, err := uuid.Parse(s); err == nil {
+						p.SourceEpisodicIDs = append(p.SourceEpisodicIDs, uid)
+					}
 				}
 			}
 		}

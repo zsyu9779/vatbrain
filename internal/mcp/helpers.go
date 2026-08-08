@@ -1,7 +1,7 @@
 package mcp
 
-// clampWeight ensures the weight stays in [0, 1].
-func clampWeight(w float64) float64 {
+// ClampWeight ensures the weight stays in [0, 1].
+func ClampWeight(w float64) float64 {
 	if w < 0 {
 		return 0
 	}

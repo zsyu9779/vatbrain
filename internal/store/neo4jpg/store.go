@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/vatbrain/vatbrain/internal/db/neo4j"
 	"github.com/vatbrain/vatbrain/internal/db/pgvector"
 	"github.com/vatbrain/vatbrain/internal/models"
@@ -733,42 +734,44 @@ func (s *Store) GetConsolidationRun(ctx context.Context, runID uuid.UUID) (*mode
 			return nil, records.Err()
 		}
 		r := records.Record()
+		node, _, _ := neodriver.GetRecordValue[dbtype.Node](r, "c")
 
-		ridStr, _, _ := neodriver.GetRecordValue[string](r, "c.run_id")
-		startedAt, _, _ := neodriver.GetRecordValue[time.Time](r, "c.started_at")
-		completedAt, caIsNil, _ := neodriver.GetRecordValue[time.Time](r, "c.completed_at")
-		epScanned, _, _ := neodriver.GetRecordValue[int64](r, "c.episodics_scanned")
-		candFound, _, _ := neodriver.GetRecordValue[int64](r, "c.candidate_rules_found")
-		rulesPersisted, _, _ := neodriver.GetRecordValue[int64](r, "c.rules_persisted")
-		avgAcc, _, _ := neodriver.GetRecordValue[float64](r, "c.average_accuracy")
-			pitExtracted, _, _ := neodriver.GetRecordValue[int64](r, "c.pitfalls_extracted")
-			pitMerged, _, _ := neodriver.GetRecordValue[int64](r, "c.pitfalls_merged")
-			pitPersisted, _, _ := neodriver.GetRecordValue[int64](r, "c.pitfalls_persisted")
-			rulesError, _, _ := neodriver.GetRecordValue[string](r, "c.rules_error")
-			pitfallError, _, _ := neodriver.GetRecordValue[string](r, "c.pitfall_error")
+			ridStr, _ := node.Props["run_id"].(string)
+			rid, err := uuid.Parse(ridStr)
+			if err != nil {
+				return nil, err
+			}
 
-		rid, err := uuid.Parse(ridStr)
-		if err != nil {
-			return nil, err
-		}
+			startedAt, _ := node.Props["started_at"].(time.Time)
+			epScanned, _ := node.Props["episodics_scanned"].(int64)
+			candFound, _ := node.Props["candidate_rules_found"].(int64)
+			rulesPersisted, _ := node.Props["rules_persisted"].(int64)
+			avgAcc, _ := node.Props["average_accuracy"].(float64)
+			pitExtracted, _ := node.Props["pitfalls_extracted"].(int64)
+			pitMerged, _ := node.Props["pitfalls_merged"].(int64)
+			pitPersisted, _ := node.Props["pitfalls_persisted"].(int64)
+			rulesError, _ := node.Props["rules_error"].(string)
+			pitfallError, _ := node.Props["pitfall_error"].(string)
 
-		result := &models.ConsolidationRunResult{
-			RunID:              rid,
-			StartedAt:          startedAt,
-			EpisodicsScanned:   int(epScanned),
-			CandidateRulesFound: int(candFound),
-			RulesPersisted:     int(rulesPersisted),
-			AverageAccuracy:    avgAcc,
+			result := &models.ConsolidationRunResult{
+				RunID:              rid,
+				StartedAt:          startedAt,
+				EpisodicsScanned:   int(epScanned),
+				CandidateRulesFound: int(candFound),
+				RulesPersisted:     int(rulesPersisted),
+				AverageAccuracy:    avgAcc,
 				PitfallsExtracted:  int(pitExtracted),
 				PitfallsMerged:     int(pitMerged),
 				PitfallsPersisted:  int(pitPersisted),
 				RulesError:         rulesError,
 				PitfallError:       pitfallError,
-		}
-		if !caIsNil {
-			result.CompletedAt = &completedAt
-		}
-		return result, nil
+			}
+			if v, ok := node.Props["completed_at"]; ok && v != nil {
+				t, _ := v.(time.Time)
+				result.CompletedAt = &t
+			}
+			return result, nil
+
 	})
 	if err != nil {
 		return nil, fmt.Errorf("neo4jpg: get consolidation run: %w", err)
@@ -809,83 +812,78 @@ func (s *Store) Close() error {
 
 // scanEpisodic maps a Neo4j record to an EpisodicMemory.
 func scanEpisodic(r *neodriver.Record, prefix string) (*models.EpisodicMemory, error) {
-	key := func(field string) string { return prefix + "." + field }
+	node, _, _ := neodriver.GetRecordValue[dbtype.Node](r, prefix)
 
-	idStr, _, _ := neodriver.GetRecordValue[string](r, key("id"))
-	projectID, _, _ := neodriver.GetRecordValue[string](r, key("project_id"))
-	language, _, _ := neodriver.GetRecordValue[string](r, key("language"))
-	taskType, _, _ := neodriver.GetRecordValue[string](r, key("task_type"))
-	summary, _, _ := neodriver.GetRecordValue[string](r, key("summary"))
-	sourceType, _, _ := neodriver.GetRecordValue[string](r, key("source_type"))
-	trustLevel, _, _ := neodriver.GetRecordValue[int64](r, key("trust_level"))
-	weight, _, _ := neodriver.GetRecordValue[float64](r, key("weight"))
-	effFreq, _, _ := neodriver.GetRecordValue[float64](r, key("effective_frequency"))
-	createdAt, _, _ := neodriver.GetRecordValue[time.Time](r, key("created_at"))
-	lastAccessedAt, laIsNil, _ := neodriver.GetRecordValue[time.Time](r, key("last_accessed_at"))
-	obsoletedAt, obIsNil, _ := neodriver.GetRecordValue[time.Time](r, key("obsoleted_at"))
-	entityGroup, _, _ := neodriver.GetRecordValue[string](r, key("entity_group"))
-	embeddingID, _, _ := neodriver.GetRecordValue[string](r, key("embedding_id"))
-	fullSnapshotURI, _, _ := neodriver.GetRecordValue[string](r, key("full_snapshot_uri"))
-
+	idStr, _ := node.Props["id"].(string)
 	pid, err := uuid.Parse(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("neo4jpg: parse id %q: %w", idStr, err)
 	}
 
+	trustLevel, _ := node.Props["trust_level"].(int64)
+	weight, _ := node.Props["weight"].(float64)
+	effFreq, _ := node.Props["effective_frequency"].(float64)
+	createdAt, _ := node.Props["created_at"].(time.Time)
+
 	mem := &models.EpisodicMemory{
 		ID:                 pid,
-		ProjectID:          projectID,
-		Language:           language,
-		TaskType:           models.TaskType(taskType),
-		Summary:            summary,
-		SourceType:         models.SourceType(sourceType),
+		ProjectID:          propStr(node, "project_id"),
+		Language:           propStr(node, "language"),
+		TaskType:           models.TaskType(propStr(node, "task_type")),
+		Summary:            propStr(node, "summary"),
+		SourceType:         models.SourceType(propStr(node, "source_type")),
 		TrustLevel:         models.TrustLevel(trustLevel),
 		Weight:             weight,
 		EffectiveFrequency: effFreq,
 		CreatedAt:          createdAt,
-		EntityGroup:        entityGroup,
-		EmbeddingID:        embeddingID,
-		FullSnapshotURI:    fullSnapshotURI,
+		EntityGroup:        propStr(node, "entity_group"),
+		EmbeddingID:        propStr(node, "embedding_id"),
+		FullSnapshotURI:    propStr(node, "full_snapshot_uri"),
 	}
-	if !laIsNil {
-		mem.LastAccessedAt = &lastAccessedAt
+
+	// Nullable fields: absent or nil in Props → leave as nil.
+	if v, ok := node.Props["last_accessed_at"]; ok && v != nil {
+		t, _ := v.(time.Time)
+		mem.LastAccessedAt = &t
 	}
-	if !obIsNil {
-		mem.ObsoletedAt = &obsoletedAt
+	if v, ok := node.Props["obsoleted_at"]; ok && v != nil {
+		t, _ := v.(time.Time)
+		mem.ObsoletedAt = &t
 	}
 	return mem, nil
 }
 
+// propStr reads a string property from a dbtype.Node, defaulting to "".
+func propStr(n dbtype.Node, key string) string {
+	s, _ := n.Props[key].(string)
+	return s
+}
+
 // scanSemantic maps a Neo4j record to a SemanticMemory.
 func scanSemantic(r *neodriver.Record, prefix string) (*models.SemanticMemory, error) {
-	key := func(field string) string { return prefix + "." + field }
+	node, _, _ := neodriver.GetRecordValue[dbtype.Node](r, prefix)
 
-	idStr, _, _ := neodriver.GetRecordValue[string](r, key("id"))
-	memType, _, _ := neodriver.GetRecordValue[string](r, key("type"))
-	content, _, _ := neodriver.GetRecordValue[string](r, key("content"))
-	sourceType, _, _ := neodriver.GetRecordValue[string](r, key("source_type"))
-	trustLevel, _, _ := neodriver.GetRecordValue[int64](r, key("trust_level"))
-	weight, _, _ := neodriver.GetRecordValue[float64](r, key("weight"))
-	effFreq, _, _ := neodriver.GetRecordValue[float64](r, key("effective_frequency"))
-	createdAt, _, _ := neodriver.GetRecordValue[time.Time](r, key("created_at"))
-	lastAccessedAt, laIsNil, _ := neodriver.GetRecordValue[time.Time](r, key("last_accessed_at"))
-	obsoletedAt, obIsNil, _ := neodriver.GetRecordValue[time.Time](r, key("obsoleted_at"))
-	entityGroup, _, _ := neodriver.GetRecordValue[string](r, key("entity_group"))
-	consRunID, _, _ := neodriver.GetRecordValue[string](r, key("consolidation_run_id"))
-	backtestAcc, _, _ := neodriver.GetRecordValue[float64](r, key("backtest_accuracy"))
-
+	idStr, _ := node.Props["id"].(string)
 	pid, err := uuid.Parse(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("neo4jpg: parse id %q: %w", idStr, err)
 	}
 
+	trustLevel, _ := node.Props["trust_level"].(int64)
+	weight, _ := node.Props["weight"].(float64)
+	effFreq, _ := node.Props["effective_frequency"].(float64)
+	createdAt, _ := node.Props["created_at"].(time.Time)
+	backtestAcc, _ := node.Props["backtest_accuracy"].(float64)
+
 	// SourceEpisodicIDs is a list of strings in Neo4j.
 	var srcIDs []uuid.UUID
-	if srcList, _, _ := neodriver.GetRecordValue[[]any](r, key("source_episodic_ids")); srcList != nil {
-		for _, v := range srcList {
-			if s, ok := v.(string); ok {
-				if uid, err := uuid.Parse(s); err == nil {
-					srcIDs = append(srcIDs, uid)
+	if raw, ok := node.Props["source_episodic_ids"]; ok && raw != nil {
+		if srcList, ok := raw.([]any); ok {
+			for _, v := range srcList {
+				if s, ok := v.(string); ok {
+					if uid, err := uuid.Parse(s); err == nil {
+						srcIDs = append(srcIDs, uid)
+					}
 				}
 			}
 		}
@@ -893,23 +891,25 @@ func scanSemantic(r *neodriver.Record, prefix string) (*models.SemanticMemory, e
 
 	mem := &models.SemanticMemory{
 		ID:                 pid,
-		Type:               models.MemoryType(memType),
-		Content:            content,
-		SourceType:         models.SourceType(sourceType),
+		Type:               models.MemoryType(propStr(node, "type")),
+		Content:            propStr(node, "content"),
+		SourceType:         models.SourceType(propStr(node, "source_type")),
 		TrustLevel:         models.TrustLevel(trustLevel),
 		Weight:             weight,
 		EffectiveFrequency: effFreq,
 		CreatedAt:          createdAt,
-		EntityGroup:        entityGroup,
-		ConsolidationRunID: consRunID,
+		EntityGroup:        propStr(node, "entity_group"),
+		ConsolidationRunID: propStr(node, "consolidation_run_id"),
 		BacktestAccuracy:   backtestAcc,
 		SourceEpisodicIDs:  srcIDs,
 	}
-	if !laIsNil {
-		mem.LastAccessedAt = &lastAccessedAt
+	if v, ok := node.Props["last_accessed_at"]; ok && v != nil {
+		t, _ := v.(time.Time)
+		mem.LastAccessedAt = &t
 	}
-	if !obIsNil {
-		mem.ObsoletedAt = &obsoletedAt
+	if v, ok := node.Props["obsoleted_at"]; ok && v != nil {
+		t, _ := v.(time.Time)
+		mem.ObsoletedAt = &t
 	}
 	return mem, nil
 }

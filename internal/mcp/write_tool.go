@@ -130,7 +130,7 @@ func writeMemoryTool(a *app.App) server.ServerTool {
 
 				now := time.Now()
 				sim := vector.CosineSimilarity(emb64, candEmb)
-				newWeight := clampWeight(sim + 0.1)
+				newWeight := ClampWeight(sim + 0.1)
 
 				existing.Summary = existing.Summary + "\n" + summary
 				existing.Weight = newWeight
