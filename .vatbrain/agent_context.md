@@ -4,9 +4,9 @@
 
 ## 项目状态
 
-- **阶段**: Hermes 集成 Phase 6 — 评测 harness ✅ 完成（未提交）；Phase 2-5 已提交推送
+- **阶段**: Hermes 集成 **Phase 1-6 全部完成并推送** ✅
 - **语言**: Go (go 1.25.5) + Python（hermes 插件）
-- **分支**: `feature/agent-memory-watcher`（本地领先 origin 1 commit，未推送）
+- **分支**: `feature/agent-memory-watcher`（工作树干净，origin 同步）
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点
 - **hermes 源码**: 本机 `~/.hermes/hermes-agent`（HEAD 52920747e，工作树干净）
 - **hermes 插件**: 已安装 `~/.hermes/plugins/vatbrain/` + daemon 二进制 `~/.hermes/vatbrain/bin/vatbrain-provider`
@@ -26,9 +26,10 @@
 
 ### 当前状态
 
-- 本地领先 origin 1 commit（Phase 6）未提交未推送
-- **Hermes 集成 Phase 1-6 全部完成**（watcher/provider/读路径/生命周期/Workbench+风险注入/评测）
-- 待用户授权激活 `~/.hermes/config.yaml` memory.provider（唯一未落地的验收项）
+- **Hermes 集成 Phase 1-6 全部完成并推送**（watcher/provider/读路径/生命周期/Workbench+风险注入/评测）
+- 工作树干净；提交：`7d88dcc`(P2) `713e726`(P3) `575533b`(P4) `1142c02`(P5) `ecb6453`(P6) + `89a8d13`(entryHash 补丁)
+- 真实安装已同步：`~/.hermes/plugins/vatbrain/` + `~/.hermes/vatbrain/bin/vatbrain-provider`
+- **待用户授权**：激活 `~/.hermes/config.yaml` memory.provider（唯一未落地的验收项，被权限门拦下）
 
 ## 最近工作（2026-08-08）— Phase 5 Pitfall Workbench + v0.3 风险注入
 
