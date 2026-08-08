@@ -1,13 +1,19 @@
 package core
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/vatbrain/vatbrain/internal/embedder"
+	"github.com/vatbrain/vatbrain/internal/llm"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
+	"github.com/vatbrain/vatbrain/internal/store/memory"
 )
 
 func makeScanResult(projectID, taskType, summary string) store.EpisodicScanItem {
@@ -135,4 +141,294 @@ func TestDefaultConsolidationEngine(t *testing.T) {
 	assert.Equal(t, 24.0, e.HoursToScan)
 	assert.Equal(t, 3, e.MinClusterSize)
 	assert.Equal(t, 0.7, e.AccuracyThreshold)
+}
+
+func TestConsolidationEngine_Run(t *testing.T) {
+	s := memory.NewStore()
+	ctx := context.Background()
+	emb := embedder.NewStubEmbedder()
+	now := time.Now()
+
+	// Write 4 episodic memories with same (project, task_type) to exceed MinClusterSize=3.
+	for i := 0; i < 4; i++ {
+		mem := &models.EpisodicMemory{
+			ID:         uuid.New(),
+			ProjectID:  "cons-proj",
+			TaskType:   models.TaskTypeDebug,
+			Summary:    "debug session " + string(rune('a'+i)),
+			SourceType: models.SourceTypeUSER,
+			TrustLevel: 5,
+			Weight:     1.0,
+			CreatedAt:  now,
+		}
+		require.NoError(t, s.WriteEpisodic(ctx, mem))
+	}
+
+	e := &ConsolidationEngine{
+		HoursToScan:       24,
+		MinClusterSize:    3,
+		AccuracyThreshold: 0.7,
+	}
+
+	result, err := e.Run(ctx, s, emb)
+	require.NoError(t, err)
+	assert.Equal(t, 4, result.EpisodicsScanned)
+	assert.Equal(t, 1, result.RulesPersisted)
+	assert.NotNil(t, result.CompletedAt)
+
+	// Verify semantic memory was written.
+	sems, semErr := s.SearchSemantic(ctx, store.SemanticSearchRequest{Limit: 10})
+	require.NoError(t, semErr)
+	assert.NotEmpty(t, sems, "expected semantic memory to be created")
+}
+
+func TestConsolidationEngine_Run_NoEpisodics(t *testing.T) {
+	s := memory.NewStore()
+	ctx := context.Background()
+	emb := embedder.NewStubEmbedder()
+
+	e := &ConsolidationEngine{
+		HoursToScan:       24,
+		MinClusterSize:    3,
+		AccuracyThreshold: 0.7,
+	}
+
+	result, err := e.Run(ctx, s, emb)
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.EpisodicsScanned)
+}
+
+func TestConsolidationEngine_Run_BelowMinCluster(t *testing.T) {
+	s := memory.NewStore()
+	ctx := context.Background()
+	emb := embedder.NewStubEmbedder()
+	now := time.Now()
+
+	// Write only 2 memories — below MinClusterSize=3.
+	for i := 0; i < 2; i++ {
+		mem := &models.EpisodicMemory{
+			ID:         uuid.New(),
+			ProjectID:  "small-cluster",
+			TaskType:   models.TaskTypeDebug,
+			Summary:    "debug " + string(rune('a'+i)),
+			SourceType: models.SourceTypeUSER,
+			TrustLevel: 5,
+			Weight:     1.0,
+			CreatedAt:  now,
+		}
+		require.NoError(t, s.WriteEpisodic(ctx, mem))
+	}
+
+	e := &ConsolidationEngine{
+		HoursToScan:       24,
+		MinClusterSize:    3,
+		AccuracyThreshold: 0.7,
+	}
+
+	result, err := e.Run(ctx, s, emb)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.EpisodicsScanned)
+	assert.Equal(t, 0, result.RulesPersisted)
+}
+
+func TestErrToString(t *testing.T) {
+	assert.Equal(t, "", errToString(nil))
+	assert.Equal(t, "context canceled", errToString(context.Canceled))
+}
+
+func TestExtractRule_LLM(t *testing.T) {
+	e := &ConsolidationEngine{
+		LLMClient: &llm.MockClient{Response: "extracted pattern: always check errors first"},
+	}
+	cl := PatternCluster{
+		ProjectID: "proj",
+		TaskType:  models.TaskTypeDebug,
+		Episodics: []store.EpisodicScanItem{
+			makeScanResult("proj", "debug", "nil pointer"),
+			makeScanResult("proj", "debug", "nil pointer again"),
+		},
+	}
+	rule := e.extractRule(t.Context(), cl)
+	assert.Contains(t, rule, "extracted pattern")
+}
+
+func TestExtractRule_LLMError_Fallback(t *testing.T) {
+	e := &ConsolidationEngine{
+		LLMClient: &llm.MockClient{Err: context.Canceled},
+	}
+	cl := PatternCluster{
+		ProjectID: "proj",
+		TaskType:  models.TaskTypeDebug,
+		Episodics: []store.EpisodicScanItem{
+			makeScanResult("proj", "debug", "nil pointer in handler"),
+		},
+	}
+	rule := e.extractRule(t.Context(), cl)
+	// Should fall back to v0.1 string concatenation.
+	assert.Contains(t, rule, "proj/debug")
+	assert.Contains(t, rule, "nil pointer in handler")
+}
+
+func TestBacktest_LLM_ValidScore(t *testing.T) {
+	e := &ConsolidationEngine{
+		MinClusterSize: 3,
+		LLMClient:      &llm.MockClient{Response: "0.85"},
+	}
+	cl := PatternCluster{
+		Episodics: make([]store.EpisodicScanItem, 5),
+	}
+	for i := range cl.Episodics {
+		cl.Episodics[i] = makeScanResult("p", "debug", "event")
+	}
+	score := e.backtest(t.Context(), cl)
+	assert.InDelta(t, 0.85, score, 0.01)
+}
+
+func TestBacktest_LLM_InvalidResponse(t *testing.T) {
+	e := &ConsolidationEngine{
+		MinClusterSize: 3,
+		LLMClient:      &llm.MockClient{Response: "not a number"},
+	}
+	cl := PatternCluster{
+		Episodics: make([]store.EpisodicScanItem, 5),
+	}
+	for i := range cl.Episodics {
+		cl.Episodics[i] = makeScanResult("p", "debug", "event")
+	}
+	score := e.backtest(t.Context(), cl)
+	// Fallback: min-size check passes.
+	assert.Equal(t, 1.0, score)
+}
+
+func TestBacktest_LLM_SmallSample(t *testing.T) {
+	e := &ConsolidationEngine{
+		MinClusterSize: 3,
+		LLMClient:      &llm.MockClient{Response: "0.9"},
+	}
+	cl := PatternCluster{
+		Episodics: make([]store.EpisodicScanItem, 2),
+	}
+	for i := range cl.Episodics {
+		cl.Episodics[i] = makeScanResult("p", "debug", "event")
+	}
+	score := e.backtest(t.Context(), cl)
+	// Sample size < 3 returns 0.0 with LLM.
+	assert.Equal(t, 0.0, score)
+}
+
+func TestConsolidationEngine_Run_WithLLM(t *testing.T) {
+	s := memory.NewStore()
+	ctx := context.Background()
+	emb := embedder.NewStubEmbedder()
+	now := time.Now()
+
+	for i := 0; i < 3; i++ {
+		mem := &models.EpisodicMemory{
+			ID:         uuid.New(),
+			ProjectID:  "llm-cons",
+			TaskType:   models.TaskTypeDebug,
+			Summary:    "debug " + string(rune('a'+i)),
+			SourceType: models.SourceTypeUSER,
+			TrustLevel: 5,
+			Weight:     1.0,
+			CreatedAt:  now,
+		}
+		require.NoError(t, s.WriteEpisodic(ctx, mem))
+	}
+
+	e := &ConsolidationEngine{
+		HoursToScan:       24,
+		MinClusterSize:    3,
+		AccuracyThreshold: 0.5,
+		LLMClient:         &llm.MockClient{Response: "check for nil pointers"},
+	}
+
+	result, err := e.Run(ctx, s, emb)
+	require.NoError(t, err)
+	assert.Equal(t, 3, result.EpisodicsScanned)
+	assert.Equal(t, 1, result.RulesPersisted)
+}
+
+func TestConsolidationEngine_Run_WithPitfallExtractor(t *testing.T) {
+	s := memory.NewStore()
+	ctx := context.Background()
+	emb := embedder.NewStubEmbedder()
+	now := time.Now()
+
+	// Write debug episodics with EntityGroup set (→ EntityID in scan item).
+	for i := 0; i < 3; i++ {
+		mem := &models.EpisodicMemory{
+			ID:          uuid.New(),
+			ProjectID:   "pf-cons-proj",
+			TaskType:    models.TaskTypeDebug,
+			Summary:     "nil pointer in func:BugFunc",
+			SourceType:  models.SourceTypeUSER,
+			TrustLevel:  5,
+			Weight:      1.0,
+			CreatedAt:   now,
+			EntityGroup: "func:BugFunc",
+		}
+		require.NoError(t, s.WriteEpisodic(ctx, mem))
+	}
+
+	e := &ConsolidationEngine{
+		HoursToScan:       24,
+		MinClusterSize:    3,
+		AccuracyThreshold: 0.7,
+		LLMClient:         &llm.MockClient{Response: "check for nil pointers"},
+		PitfallExtractor: &PitfallExtractor{
+			MinClusterSize: 9999, // filter out all entity groups
+			Embedder:       emb,
+			LLMClient:      &llm.MockClient{Response: `{"signature":"nil pointer","root_cause_category":"logic_error","fix_strategy":"check nil","confidence":0.9}`},
+		},
+	}
+
+	result, err := e.Run(ctx, s, emb)
+	require.NoError(t, err)
+	assert.Equal(t, 3, result.EpisodicsScanned)
+	// Rule extraction still runs for the 3-cluster.
+	assert.Equal(t, 1, result.RulesPersisted)
+	// PitfallExtractor was set, so runPitfallExtraction was called.
+	// With MinClusterSize=9999, no pitfalls are extracted.
+	assert.Equal(t, 0, result.PitfallsExtracted)
+}
+
+func TestConsolidationEngine_Run_PitfallExtractor_NoDebugEpisodics(t *testing.T) {
+	s := memory.NewStore()
+	ctx := context.Background()
+	emb := embedder.NewStubEmbedder()
+	now := time.Now()
+
+	// Write feature episodics (not debug) — pitfall extractor only processes debug.
+	for i := 0; i < 4; i++ {
+		mem := &models.EpisodicMemory{
+			ID:          uuid.New(),
+			ProjectID:   "feat-cons",
+			TaskType:    models.TaskTypeFeature,
+			Summary:     "feature work " + string(rune('a'+i)),
+			SourceType:  models.SourceTypeUSER,
+			TrustLevel:  5,
+			Weight:      1.0,
+			CreatedAt:   now,
+			EntityGroup: "func:FeatFunc",
+		}
+		require.NoError(t, s.WriteEpisodic(ctx, mem))
+	}
+
+	e := &ConsolidationEngine{
+		HoursToScan:       24,
+		MinClusterSize:    3,
+		AccuracyThreshold: 0.7,
+		LLMClient:         &llm.MockClient{Response: "feature pattern"},
+		PitfallExtractor: &PitfallExtractor{
+			MinClusterSize: 2,
+			Embedder:       emb,
+			LLMClient:      &llm.MockClient{Response: `{"signature":"test","root_cause_category":"unknown","fix_strategy":"none","confidence":0.5}`},
+		},
+	}
+
+	result, err := e.Run(ctx, s, emb)
+	require.NoError(t, err)
+	// PitfallExtractor filters to debug only → none found.
+	assert.Equal(t, 0, result.PitfallsExtracted)
 }

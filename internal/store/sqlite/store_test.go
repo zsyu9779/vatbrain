@@ -452,6 +452,316 @@ func TestSQLite_HotCache(t *testing.T) {
 	assert.Len(t, results2, 3)
 }
 
+// ── Pitfall Tests ─────────────────────────────────────────────────────
+
+func makePitfall(entityID, projectID, sig string) *models.PitfallMemory {
+	now := time.Now().UTC()
+	return &models.PitfallMemory{
+		ID:                uuid.New(),
+		EntityID:          entityID,
+		EntityType:        models.EntityTypeFunction,
+		ProjectID:         projectID,
+		Language:          "go",
+		Signature:         sig,
+		RootCauseCategory: models.RootCauseLogicError,
+		TrustLevel:        3,
+		Weight:            0.8,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+}
+
+func TestSQLite_WritePitfall_Get(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p := makePitfall("func:A", "proj-p", "nil deref in A")
+	err := s.WritePitfall(ctx, p)
+	require.NoError(t, err)
+
+	got, err := s.GetPitfall(ctx, p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, p.ID, got.ID)
+	assert.Equal(t, p.EntityID, got.EntityID)
+	assert.Equal(t, p.Signature, got.Signature)
+	assert.Equal(t, p.Weight, got.Weight)
+}
+
+func TestSQLite_GetPitfall_NotFound(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	_, err := s.GetPitfall(ctx, uuid.New())
+	assert.Error(t, err)
+}
+
+func TestSQLite_SearchPitfall_ByEntityID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p1 := makePitfall("func:A", "proj", "sig1")
+	p2 := makePitfall("func:B", "proj", "sig2")
+	require.NoError(t, s.WritePitfall(ctx, p1))
+	require.NoError(t, s.WritePitfall(ctx, p2))
+
+	results, err := s.SearchPitfall(ctx, store.PitfallSearchRequest{
+		EntityID: "func:A",
+		Limit:    10,
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, p1.ID, results[0].ID)
+}
+
+func TestSQLite_SearchPitfall_ByProject(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p1 := makePitfall("func:A", "proj-x", "sig")
+	p2 := makePitfall("func:B", "proj-y", "sig")
+	require.NoError(t, s.WritePitfall(ctx, p1))
+	require.NoError(t, s.WritePitfall(ctx, p2))
+
+	results, err := s.SearchPitfall(ctx, store.PitfallSearchRequest{
+		ProjectID: "proj-x",
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, p1.ID, results[0].ID)
+}
+
+func TestSQLite_SearchPitfall_ByRootCause(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p1 := makePitfall("func:A", "proj", "sig1")
+	p1.RootCauseCategory = models.RootCauseConcurrency
+	p2 := makePitfall("func:B", "proj", "sig2")
+	p2.RootCauseCategory = models.RootCauseLogicError
+	require.NoError(t, s.WritePitfall(ctx, p1))
+	require.NoError(t, s.WritePitfall(ctx, p2))
+
+	results, err := s.SearchPitfall(ctx, store.PitfallSearchRequest{
+		RootCauseCategory: models.RootCauseConcurrency,
+		Limit:             10,
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, p1.ID, results[0].ID)
+}
+
+func TestSQLite_SearchPitfall_MinWeight(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p1 := makePitfall("func:A", "proj", "s1")
+	p1.Weight = 0.2
+	p2 := makePitfall("func:B", "proj", "s2")
+	p2.Weight = 0.9
+	require.NoError(t, s.WritePitfall(ctx, p1))
+	require.NoError(t, s.WritePitfall(ctx, p2))
+
+	results, err := s.SearchPitfall(ctx, store.PitfallSearchRequest{
+		MinWeight: 0.5,
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, p2.ID, results[0].ID)
+}
+
+func TestSQLite_SearchPitfallByEntity(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p1 := makePitfall("func:DoThing", "proj-a", "sig1")
+	p2 := makePitfall("func:DoThing", "proj-b", "sig2")
+	require.NoError(t, s.WritePitfall(ctx, p1))
+	require.NoError(t, s.WritePitfall(ctx, p2))
+
+	results, err := s.SearchPitfallByEntity(ctx, "func:DoThing", "proj-a")
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, p1.ID, results[0].ID)
+}
+
+func TestSQLite_SearchPitfallByEntity_NotFound(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	results, err := s.SearchPitfallByEntity(ctx, "func:Nonexistent", "proj")
+	require.NoError(t, err)
+	assert.Empty(t, results)
+}
+
+func TestSQLite_TouchPitfall(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p := makePitfall("func:A", "proj", "sig")
+	require.NoError(t, s.WritePitfall(ctx, p))
+
+	now := time.Now().UTC()
+	require.NoError(t, s.TouchPitfall(ctx, p.ID, now))
+
+	got, err := s.GetPitfall(ctx, p.ID)
+	require.NoError(t, err)
+	assert.True(t, got.LastOccurredAt.Truncate(time.Second).Equal(now.Truncate(time.Second)))
+}
+
+func TestSQLite_UpdatePitfallWeight(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p := makePitfall("func:A", "proj", "sig")
+	require.NoError(t, s.WritePitfall(ctx, p))
+
+	err := s.UpdatePitfallWeight(ctx, p.ID, 0.25)
+	require.NoError(t, err)
+
+	got, err := s.GetPitfall(ctx, p.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.25, got.Weight, 1e-9)
+}
+
+func TestSQLite_MarkPitfallObsolete(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p := makePitfall("func:A", "proj", "sig")
+	require.NoError(t, s.WritePitfall(ctx, p))
+
+	now := time.Now().UTC()
+	require.NoError(t, s.MarkPitfallObsolete(ctx, p.ID, now))
+
+	got, err := s.GetPitfall(ctx, p.ID)
+	require.NoError(t, err)
+	assert.True(t, got.ObsoletedAt.Truncate(time.Second).Equal(now.Truncate(time.Second)))
+}
+
+func TestSQLite_UpdateSemanticWeight(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mem := &models.SemanticMemory{
+		ID:                 uuid.New(),
+		Type:               models.MemoryTypeRule,
+		Content:            "test rule",
+		Weight:             1.0,
+		EffectiveFrequency: 1.0,
+		CreatedAt:          time.Now().UTC(),
+	}
+	require.NoError(t, s.WriteSemantic(ctx, mem))
+
+	err := s.UpdateSemanticWeight(ctx, mem.ID, 0.75, 2.0)
+	require.NoError(t, err)
+
+	got, err := s.GetSemantic(ctx, mem.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.75, got.Weight, 1e-9)
+	assert.InDelta(t, 2.0, got.EffectiveFrequency, 1e-9)
+}
+
+func TestSQLite_WritePitfall_WithSourceEpisodicIDs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	srcID1 := uuid.New()
+	srcID2 := uuid.New()
+	p := makePitfall("func:A", "proj", "sig")
+	p.SourceEpisodicIDs = []uuid.UUID{srcID1, srcID2}
+	require.NoError(t, s.WritePitfall(ctx, p))
+
+	got, err := s.GetPitfall(ctx, p.ID)
+	require.NoError(t, err)
+	assert.Len(t, got.SourceEpisodicIDs, 2)
+	assert.Contains(t, got.SourceEpisodicIDs, srcID1)
+	assert.Contains(t, got.SourceEpisodicIDs, srcID2)
+}
+
+func TestSQLite_GetEdges_EmptyResult(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	edges, err := s.GetEdges(ctx, uuid.New(), "", "out")
+	require.NoError(t, err)
+	assert.Empty(t, edges)
+}
+
+func TestSQLite_GetConsolidationRun_NotFound(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_, err := s.GetConsolidationRun(ctx, uuid.New())
+	assert.Error(t, err)
+}
+
+func TestSQLite_SearchPitfall_WithEmbedding(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p := makePitfall("func:A", "proj", "sig")
+	require.NoError(t, s.WritePitfall(ctx, p))
+
+	results, err := s.SearchPitfall(ctx, store.PitfallSearchRequest{
+		EntityID:  "func:A",
+		Embedding: []float64{0.1, 0.2, 0.3},
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, results)
+}
+
+func TestSQLite_NewStore_NoWAL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "no-wal.db")
+	s, err := NewStore(config.SQLiteConfig{Path: path, WAL: false})
+	require.NoError(t, err)
+	defer s.Close()
+	assert.NoError(t, s.HealthCheck(context.Background()))
+}
+
+func TestSQLite_NewStore_BadPath(t *testing.T) {
+	_, err := NewStore(config.SQLiteConfig{Path: "/nonexistent/dir/db.sqlite"})
+	assert.Error(t, err)
+}
+
+func TestSQLite_GetConsolidationRun_Completed(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	run := &models.ConsolidationRunResult{
+		RunID:             uuid.New(),
+		StartedAt:         now,
+		CompletedAt:       &now,
+		EpisodicsScanned:  50,
+		RulesPersisted:    3,
+		AverageAccuracy:   0.9,
+		PitfallsExtracted: 1,
+	}
+	require.NoError(t, s.SaveConsolidationRun(ctx, run))
+
+	got, err := s.GetConsolidationRun(ctx, run.RunID)
+	require.NoError(t, err)
+	assert.NotNil(t, got.CompletedAt)
+	assert.Equal(t, 50, got.EpisodicsScanned)
+}
+
+func TestSQLite_SearchPitfall_WithEmbeddingNoEntity(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p := makePitfall("func:B", "proj", "sigB")
+	require.NoError(t, s.WritePitfall(ctx, p))
+
+	results, err := s.SearchPitfall(ctx, store.PitfallSearchRequest{
+		ProjectID: "proj",
+		Embedding: []float64{0.1, 0.2},
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, results)
+}
+
 func TestMain(m *testing.M) {
 	// Ensure no stray test.db files
 	os.Remove("test.db")
