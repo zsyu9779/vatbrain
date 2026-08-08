@@ -73,6 +73,7 @@ func main() {
 	}
 
 	srv := provider.NewServer(deps)
+	srv.Consolidation = a.Consolidation
 	go func() {
 		<-srv.ShutdownSignal()
 		stop()

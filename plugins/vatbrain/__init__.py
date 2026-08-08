@@ -147,6 +147,55 @@ class VatBrainMemoryProvider(MemoryProvider):
             logger.debug("vatbrain: prefetch failed (best-effort): %s", exc)
             return ""
 
+    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+        """Trigger sleep integration (rule + pitfall extraction) in the daemon."""
+        threading.Thread(
+            target=self._background_rpc,
+            args=("on_session_end", {"session_id": self._session_id}),
+            name="vatbrain-session-end",
+            daemon=True,
+        ).start()
+
+    def on_session_switch(self, new_session_id: str, *,
+                          parent_session_id: str = "", reset: bool = False,
+                          rewound: bool = False, **kwargs: Any) -> None:
+        """Rebind the daemon session after /new /reset /branch /resume."""
+        try:
+            self._rpc("on_session_switch", {
+                "session_id": self._session_id,
+                "new_session_id": new_session_id,
+                "parent_session_id": parent_session_id,
+                "reset": reset,
+                "rewound": rewound,
+            }, timeout=_IO_TIMEOUT_S)
+        except Exception as exc:
+            logger.debug("vatbrain: on_session_switch failed (best-effort): %s", exc)
+        self._session_id = new_session_id
+
+    def on_memory_write(self, action: str, target: str, content: str,
+                        metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Mirror a built-in hermes memory write into the graph as a
+        user-explicit episodic (SourceType=USER, highest trust)."""
+        meta = {k: str(v) for k, v in (metadata or {}).items() if v is not None}
+        threading.Thread(
+            target=self._background_rpc,
+            args=("on_memory_write", {
+                "session_id": self._session_id,
+                "action": action,
+                "target": target,
+                "content": content,
+                "metadata": meta,
+            }),
+            name="vatbrain-memory-write",
+            daemon=True,
+        ).start()
+
+    def _background_rpc(self, method: str, params: Dict[str, Any]) -> None:
+        try:
+            self._rpc(method, params, timeout=_IO_TIMEOUT_S)
+        except Exception as exc:
+            logger.warning("vatbrain: %s failed (best-effort): %s", method, exc)
+
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """No tools in Phase 2; prepare_edit_context lands in Phase 5."""
         return []

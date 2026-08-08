@@ -72,21 +72,38 @@ def main() -> int:
     assert "clawfeed-push-v3.py" in ctx, f"prefetch missing memory: {ctx!r}"
     print("[vatbrain] prefetch context:", repr(ctx[:120]))
 
+    # Phase 4: built-in memory write mirror → user_explicit episodic
+    p.on_memory_write("add", "memory", "用户显式记忆：软路由用 Ruby YAML 解析",
+                      {"write_origin": "assistant_tool"})
+    p.on_session_end([])  # sleep integration (background, best-effort)
+    p.on_session_switch("sess-smoke-2", reset=True)
+    time.sleep(3)
     p.shutdown()
 
     db = os.path.join(home, "vatbrain", "vatbrain.db")
     assert os.path.exists(db), f"sqlite db missing: {db}"
     con = sqlite3.connect(db)
+
     rows = con.execute(
         "SELECT is_correction, summary, project_id FROM episodic_memories"
     ).fetchall()
     print("[vatbrain] episodic rows:", len(rows))
     for is_corr, summary, pid in rows:
         print(f"  is_correction={is_corr} project={pid} | {summary[:40]}…")
-    assert len(rows) == 2, f"expected 2 episodes, got {len(rows)}"
+    assert len(rows) == 3, f"expected 3 episodes, got {len(rows)}"
     corrections = [r for r in rows if r[0] == 1]
     assert len(corrections) == 1, f"expected 1 IsCorrection=true, got {len(corrections)}"
-    print("[vatbrain] SMOKE OK: correction landed with is_correction=1")
+
+    mirrored = con.execute(
+        "SELECT source_type, trust_level, full_snapshot_uri FROM episodic_memories "
+        "WHERE source_type='USER'"
+    ).fetchall()
+    assert len(mirrored) == 1, f"expected 1 user_explicit mirror, got {len(mirrored)}"
+    uri = mirrored[0][2]
+    assert "source=user_explicit" in uri, f"missing source marker: {uri}"
+    assert "origin=assistant_tool" in uri, f"missing write_origin: {uri}"
+    print("[vatbrain] on_memory_write mirror OK: source_type=USER, source=user_explicit")
+    print("[vatbrain] SMOKE OK: correction + prefetch + lifecycle mirror all pass")
     return 0
 
 

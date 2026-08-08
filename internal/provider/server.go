@@ -46,11 +46,18 @@ type Server struct {
 	shutdownC   chan struct{}
 	writeTimeout time.Duration // per-sync_turn deadline; 0 disables
 
+	// Consolidation runs sleep integration on on_session_end. May be nil.
+	Consolidation *core.ConsolidationEngine
+
 	// prefetchCache holds warm recall results per session, filled by
 	// queue_prefetch (turn N) and consumed by prefetch (turn N+1) so the
 	// hermes hot path reads a cache instead of blocking on retrieval.
 	prefetchCache map[string]string
 	prefetchMu    sync.Mutex
+
+	// memoryWrite tracks mirrored built-in writes for replace/remove
+	// provenance (DERIVED_FROM edges).
+	memoryWrite *memoryWriteIndex
 }
 
 // NewServer creates a JSON-RPC server bound to the given write-pipeline deps.
@@ -62,6 +69,7 @@ func NewServer(deps core.WriteDeps) *Server {
 		shutdownC:     make(chan struct{}),
 		writeTimeout:  30 * time.Second,
 		prefetchCache: make(map[string]string),
+		memoryWrite:   newMemoryWriteIndex(),
 	}
 }
 
@@ -163,6 +171,12 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
 		return s.handlePrefetch(ctx, req)
 	case MethodQueuePrefetch:
 		return s.handleQueuePrefetch(ctx, req)
+	case MethodOnSessionEnd:
+		return s.handleOnSessionEnd(req)
+	case MethodOnMemoryWrite:
+		return s.handleOnMemoryWrite(ctx, req)
+	case MethodOnSessionSwitch:
+		return s.handleOnSessionSwitch(req)
 	case MethodPing:
 		return newResponse(req.ID, map[string]bool{"pong": true})
 	case MethodShutdown:

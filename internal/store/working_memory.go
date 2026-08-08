@@ -76,3 +76,13 @@ func (w *WorkingMemoryBuffer) GetAll(projectID string) []string {
 	}
 	return rb.getAll()
 }
+
+// Clear drops the working-memory cycles for a project. Used by the provider
+// daemon on on_session_switch(reset=true) so a genuinely new conversation
+// (/new, /reset) starts with a fresh buffer instead of carrying stale cycles
+// into cross-cycle persistence.
+func (w *WorkingMemoryBuffer) Clear(projectID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.cycles, projectID)
+}

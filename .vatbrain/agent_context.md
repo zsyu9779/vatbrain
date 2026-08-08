@@ -4,13 +4,33 @@
 
 ## 项目状态
 
-- **阶段**: Hermes 集成 Phase 3 — 读路径 prefetch + Pitfall 注入 ✅ 完成（未提交）；Phase 2 已提交推送
+- **阶段**: Hermes 集成 Phase 4 — 生命周期钩子 ✅ 完成（未提交）；Phase 2/3 已提交推送
 - **语言**: Go (go 1.25.5) + Python（hermes 插件）
 - **分支**: `feature/agent-memory-watcher`（本地领先 origin 1 commit，未推送）
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点
 - **hermes 源码**: 本机 `~/.hermes/hermes-agent`（HEAD 52920747e，工作树干净）
 - **hermes 插件**: 已安装 `~/.hermes/plugins/vatbrain/` + daemon 二进制 `~/.hermes/vatbrain/bin/vatbrain-provider`
 - **战略决策（2026-08-08）**: Neo4j+pgvector 重型存储将弃用，后续只投入 SQLite 路径
+
+## 最近工作（2026-08-08）— Phase 4 生命周期钩子
+
+### 本次完成
+
+1. **`internal/provider/lifecycle.go`**（新）：`on_session_end` / `on_memory_write` / `on_session_switch`
+   - `on_session_end`：后台 goroutine 跑 ConsolidationEngine.Run（规则+Pitfall 双线，120s 超时），不阻塞会话结束
+   - `on_memory_write`：镜像内置写 → `SourceType=USER` + `TrustLevel=Max`（最高可信级）；add→新 episodic、replace→新 episodic + `DERIVED_FROM` 边 + 旧条目 obsolete、remove→旧条目 obsolete；内存 `memoryWriteIndex` 追踪版本溯源（重启降级为 best-effort）；FullSnapshotURI 编码 `source=user_explicit&origin=<write_origin>`
+   - `on_session_switch`：reset=true→`WorkingMemoryBuffer.Clear`（新增方法）；rewound=true→失效 prefetch 缓存；重绑 session
+2. **插件**：`on_session_end`（后台）、`on_memory_write`（后台）、`on_session_switch`（同步）
+3. **验收**：
+   - 冒烟：on_memory_write → sqlite `source_type=USER` + `source=user_explicit` + `origin=assistant_tool` ✅
+   - replace 的 DERIVED_FROM 边 + obsolete、remove 的 obsolete、reset 清缓冲、rewound 失效缓存均有单测 ✅
+   - `go test ./internal/...` 20/20 全绿（provider 生命周期中文用例）
+   - 真实 `~/.hermes/plugins/vatbrain/` + `~/.hermes/vatbrain/bin/` 已同步
+
+### 当前状态
+
+- 本地领先 origin 1 commit（Phase 4）未提交未推送
+- 待用户授权激活 `~/.hermes/config.yaml` memory.provider
 
 ## 最近工作（2026-08-08）— Phase 3 读路径 prefetch + Pitfall 注入
 
