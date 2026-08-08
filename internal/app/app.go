@@ -146,6 +146,9 @@ func New(ctx context.Context) (*App, error) {
 	} else {
 		emb = embedder.NewStubEmbedder()
 	}
+	// F1: embedding-based cross-cycle similarity (CJK-safe). The stub yields
+	// zero vectors, so the gate falls back to keyword overlap there.
+	significanceGate.Embedder = emb
 
 	// LLM client for consolidation rule/pitfall extraction.
 	var llmClient llm.Client
@@ -169,7 +172,7 @@ func New(ctx context.Context) (*App, error) {
 	if cfg.Watcher.Enabled {
 		providers := buildWatcherProviders(&cfg.Watcher)
 		refiner := watcher.NewRefiner(llmClient, emb, "")
-		memoryWatcher = watcher.NewMemoryWatcher(providers, refiner, s,
+		memoryWatcher = watcher.NewMemoryWatcher(providers, refiner, emb, s,
 			cfg.Watcher.PollInterval, 10000)
 		if cfg.Watcher.DataDir != "" {
 			if err := memoryWatcher.RestoreSeenSet(

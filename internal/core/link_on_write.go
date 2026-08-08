@@ -6,17 +6,25 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
 )
+
+// tokenLinkThreshold is the minimum Jaccard overlap (token path) for two
+// summaries to count as related.
+const tokenLinkThreshold = 0.15
 
 // LinkOnWrite finds memories related to the newly created episodic memory and
 // creates RELATES_TO edges. If the memory is a debug session with an entity
 // anchor, it also checks for existing Pitfall matches and creates
 // TRIGGERED_PITFALL edges. All operations are best-effort — failures are
 // logged but do not prevent the write from succeeding.
-func LinkOnWrite(ctx context.Context, s store.MemoryStore, memoryID uuid.UUID, summary, projectID, entityID string, taskType models.TaskType) {
-	// 1. Existing: RELATES_TO edges via token similarity.
+//
+// emb enables embedding-based similarity (CJK-safe). When emb is nil, or the
+// embedder produces no signal, linking degrades to token similarity.
+func LinkOnWrite(ctx context.Context, emb embedder.Embedder, s store.MemoryStore, memoryID uuid.UUID, summary, projectID, entityID string, taskType models.TaskType) {
+	// 1. Existing: RELATES_TO edges via embedding (or token) similarity.
 	related, err := s.SearchEpisodic(ctx, store.EpisodicSearchRequest{
 		ProjectID: projectID,
 		Limit:     20,
@@ -30,8 +38,8 @@ func LinkOnWrite(ctx context.Context, s store.MemoryStore, memoryID uuid.UUID, s
 		if r.ID == memoryID {
 			continue
 		}
-		strength := tokenSimilarity(summary, r.Summary)
-		if strength < 0.15 {
+		strength := linkSimilarity(ctx, emb, summary, r.Summary)
+		if strength < 0 {
 			continue
 		}
 		err := s.CreateEdge(ctx, memoryID, r.ID, "RELATES_TO", map[string]any{
@@ -65,6 +73,27 @@ func LinkOnWrite(ctx context.Context, s store.MemoryStore, memoryID uuid.UUID, s
 			}
 		}
 	}
+}
+
+// linkSimilarity computes the relatedness strength between two summaries:
+// embedding cosine similarity when an embedder is available and produces a
+// signal (CJK-safe), token Jaccard otherwise. It returns -1 when the summaries
+// are not related (below the respective threshold).
+func linkSimilarity(ctx context.Context, emb embedder.Embedder, a, b string) float64 {
+	if emb != nil {
+		if sim, ok := embeddingSimilarity(ctx, emb, a, b); ok {
+			if sim >= embeddingSimilarityThreshold {
+				return sim
+			}
+			return -1
+		}
+		// Embedder produced no signal — fall through to token similarity.
+	}
+	s := tokenSimilarity(a, b)
+	if s >= tokenLinkThreshold {
+		return s
+	}
+	return -1
 }
 
 // tokenSimilarity computes Jaccard similarity on token sets.

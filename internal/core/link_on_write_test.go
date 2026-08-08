@@ -65,8 +65,8 @@ func TestLinkOnWrite_RelatesToEdges(t *testing.T) {
 		SourceType: models.SourceTypeUSER, TrustLevel: 5, Weight: 1.0, CreatedAt: time.Now(),
 	}))
 
-	// LinkOnWrite should create RELATES_TO edges
-	LinkOnWrite(ctx, s, from, "redis connection pool exhausted", "low-proj", "", models.TaskTypeFeature)
+	// LinkOnWrite should create RELATES_TO edges (nil embedder → token path)
+	LinkOnWrite(ctx, nil, s, from, "redis connection pool exhausted", "low-proj", "", models.TaskTypeFeature)
 
 	edges, err := s.GetEdges(ctx, from, "", "out")
 	require.NoError(t, err)
@@ -101,10 +101,61 @@ func TestLinkOnWrite_DebugWithPitfall(t *testing.T) {
 		TrustLevel: 3, Weight: 1.0, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}))
 
-	LinkOnWrite(ctx, s, memID, "nil pointer in handler", "low-debug", "func:Handler", models.TaskTypeDebug)
+	LinkOnWrite(ctx, nil, s, memID, "nil pointer in handler", "low-debug", "func:Handler", models.TaskTypeDebug)
 
 	// Should create TRIGGERED_PITFALL edge
 	edges, err := s.GetEdges(ctx, memID, "TRIGGERED_PITFALL", "out")
 	require.NoError(t, err)
 	assert.NotEmpty(t, edges, "should create TRIGGERED_PITFALL edge for debug with pitfall")
+}
+
+// F1 acceptance: two similar Chinese summaries must produce a RELATES_TO edge
+// via the embedding path — the token path would see empty token sets.
+func TestLinkOnWrite_RelatesToEdges_Chinese(t *testing.T) {
+	s := newMemoryStoreForTest()
+	ctx := context.Background()
+
+	from := uuid.New()
+	require.NoError(t, s.WriteEpisodic(ctx, &models.EpisodicMemory{
+		ID: from, ProjectID: "low-proj", Summary: "并发问题通常出在锁粒度，要仔细检查锁的范围和持有时间",
+		SourceType: models.SourceTypeUSER, TrustLevel: 5, Weight: 1.0, CreatedAt: time.Now(),
+	}))
+	to := uuid.New()
+	require.NoError(t, s.WriteEpisodic(ctx, &models.EpisodicMemory{
+		ID: to, ProjectID: "low-proj", Summary: "并发问题出在锁粒度，需要仔细检查锁的范围和持有时间",
+		SourceType: models.SourceTypeUSER, TrustLevel: 5, Weight: 1.0, CreatedAt: time.Now(),
+	}))
+
+	LinkOnWrite(ctx, runeEmbedder{}, s, from,
+		"并发问题通常出在锁粒度，要仔细检查锁的范围和持有时间",
+		"low-proj", "", models.TaskTypeFeature)
+
+	edges, err := s.GetEdges(ctx, from, "RELATES_TO", "out")
+	require.NoError(t, err)
+	assert.NotEmpty(t, edges, "should create RELATES_TO edge for similar Chinese summaries")
+}
+
+// F1 negative: unrelated Chinese summaries must not link.
+func TestLinkOnWrite_NoEdge_ChineseDissimilar(t *testing.T) {
+	s := newMemoryStoreForTest()
+	ctx := context.Background()
+
+	from := uuid.New()
+	require.NoError(t, s.WriteEpisodic(ctx, &models.EpisodicMemory{
+		ID: from, ProjectID: "low-proj", Summary: "数据库连接池耗尽导致请求超时",
+		SourceType: models.SourceTypeUSER, TrustLevel: 5, Weight: 1.0, CreatedAt: time.Now(),
+	}))
+	to := uuid.New()
+	require.NoError(t, s.WriteEpisodic(ctx, &models.EpisodicMemory{
+		ID: to, ProjectID: "low-proj", Summary: "前端组件渲染性能优化",
+		SourceType: models.SourceTypeUSER, TrustLevel: 5, Weight: 1.0, CreatedAt: time.Now(),
+	}))
+
+	LinkOnWrite(ctx, runeEmbedder{}, s, from,
+		"数据库连接池耗尽导致请求超时",
+		"low-proj", "", models.TaskTypeFeature)
+
+	edges, err := s.GetEdges(ctx, from, "RELATES_TO", "out")
+	require.NoError(t, err)
+	assert.Empty(t, edges, "should not create RELATES_TO edge for unrelated Chinese summaries")
 }

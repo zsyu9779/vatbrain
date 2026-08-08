@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/vatbrain/vatbrain/internal/core"
+	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
 )
@@ -18,6 +19,7 @@ type MemoryWatcher struct {
 	registry     *ProviderRegistry
 	refiner      *Refiner
 	store        store.MemoryStore
+	embedder     embedder.Embedder
 	pollInterval time.Duration
 	seenSet      *seenSet
 
@@ -26,11 +28,14 @@ type MemoryWatcher struct {
 	stopCh  chan struct{}
 }
 
-// NewMemoryWatcher creates a MemoryWatcher. pollInterval controls how often
-// all providers are scanned. seenMaxEntries controls the LRU seen set size.
+// NewMemoryWatcher creates a MemoryWatcher. emb enables embedding-based
+// similarity when linking written memories (CJK-safe; may be nil for a
+// lexical fallback). pollInterval controls how often all providers are
+// scanned. seenMaxEntries controls the LRU seen set size.
 func NewMemoryWatcher(
 	providers []MemoryProvider,
 	refiner *Refiner,
+	emb embedder.Embedder,
 	s store.MemoryStore,
 	pollInterval time.Duration,
 	seenMaxEntries int,
@@ -48,6 +53,7 @@ func NewMemoryWatcher(
 		registry:     reg,
 		refiner:      refiner,
 		store:        s,
+		embedder:     emb,
 		pollInterval: pollInterval,
 		seenSet:      newSeenSet(seenMaxEntries),
 	}
@@ -163,7 +169,7 @@ func (w *MemoryWatcher) scanAll(ctx context.Context) SyncResult {
 			}
 
 			// Run LinkOnWrite to create edges (best-effort).
-			core.LinkOnWrite(ctx, w.store, ep.ID, ep.Summary, ep.ProjectID,
+			core.LinkOnWrite(ctx, w.embedder, w.store, ep.ID, ep.Summary, ep.ProjectID,
 				ep.EntityGroup, ep.TaskType)
 
 			result.TotalWritten++

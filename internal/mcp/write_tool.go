@@ -66,7 +66,7 @@ func writeMemoryTool(a *app.App) server.ServerTool {
 				UserConfirmed: userConfirmed,
 				IsCorrection:  isCorrection,
 			}
-			gateResult := a.SignificanceGate.Evaluate(event, workingMemory)
+			gateResult := a.SignificanceGate.Evaluate(ctx, event, workingMemory)
 
 			if !gateResult.ShouldPersist {
 				resp, jErr := mcp.NewToolResultJSON(writeMemoryOutput{
@@ -178,7 +178,7 @@ func writeMemoryTool(a *app.App) server.ServerTool {
 			}
 
 			// Link to related memories.
-			core.LinkOnWrite(ctx, a.Store, memoryID, summary, projectID, entityID, models.TaskType(taskType))
+			core.LinkOnWrite(ctx, a.Embedder, a.Store, memoryID, summary, projectID, entityID, models.TaskType(taskType))
 
 			// Push to working-memory cycles.
 			a.WorkingMemory.Push(projectID, summary)

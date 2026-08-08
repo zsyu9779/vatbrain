@@ -1,5 +1,18 @@
 package core
 
+import (
+	"context"
+
+	"github.com/vatbrain/vatbrain/internal/embedder"
+	"github.com/vatbrain/vatbrain/internal/vector"
+)
+
+// embeddingSimilarityThreshold is the cosine similarity above which two
+// summaries are treated as carrying the same information. It is shared by the
+// significance gate's cross-cycle condition and link_on_write's RELATES_TO
+// edge creation, and is aligned with ConsolidationEngine.AccuracyThreshold.
+const embeddingSimilarityThreshold = 0.7
+
 // SignificanceGate decides whether an event passes the threshold for persistence
 // into long-term memory. It implements the principle "forgetting is default,
 // remembering is the exception."
@@ -16,13 +29,22 @@ type SignificanceGate struct {
 	// MinSubsequentRefs is the minimum number of subsequent references for
 	// condition 4 to pass. Default 2.
 	MinSubsequentRefs int
+	// Embedder, when set, enables embedding-based cross-cycle similarity.
+	// Embeddings are CJK-safe; the keyword TokenOverlap fallback only sees
+	// space-delimited Latin text (a Chinese summary tokenizes to an empty
+	// set). When nil, the gate degrades to keyword overlap.
+	Embedder embedder.Embedder
+	// EmbedSimilarityThreshold is the cosine similarity above which two
+	// summaries count as the same information. Default 0.7.
+	EmbedSimilarityThreshold float64
 }
 
 // DefaultSignificanceGate returns a SignificanceGate with sensible defaults.
 func DefaultSignificanceGate() *SignificanceGate {
 	return &SignificanceGate{
-		MinCrossCycleCount: 2,
-		MinSubsequentRefs:  2,
+		MinCrossCycleCount:       2,
+		MinSubsequentRefs:        2,
+		EmbedSimilarityThreshold: embeddingSimilarityThreshold,
 	}
 }
 
@@ -34,14 +56,14 @@ type GateResult struct {
 
 // Evaluate runs the event through all four gating conditions.
 // It returns as soon as the first condition passes (short-circuit OR).
-func (g *SignificanceGate) Evaluate(event WriteEvent, workingMemory []WorkingMemoryCycle) GateResult {
+func (g *SignificanceGate) Evaluate(ctx context.Context, event WriteEvent, workingMemory []WorkingMemoryCycle) GateResult {
 	// Condition 1: User explicitly confirmed.
 	if event.UserConfirmed {
 		return GateResult{ShouldPersist: true, Reason: "user_confirmed"}
 	}
 
 	// Condition 2: Cross-cycle persistence — same info in >= N recent cycles.
-	if g.countRecentCycles(event, workingMemory) >= g.MinCrossCycleCount {
+	if g.countRecentCycles(ctx, event, workingMemory) >= g.MinCrossCycleCount {
 		return GateResult{ShouldPersist: true, Reason: "cross_cycle_persistence"}
 	}
 
@@ -59,9 +81,31 @@ func (g *SignificanceGate) Evaluate(event WriteEvent, workingMemory []WorkingMem
 }
 
 // countRecentCycles counts how many recent working-memory cycles contain
-// information similar to the given event. v0.1 uses simple keyword overlap
-// as a proxy for topic similarity.
-func (g *SignificanceGate) countRecentCycles(event WriteEvent, cycles []WorkingMemoryCycle) int {
+// information similar to the given event. When the gate has an embedder, it
+// uses embedding cosine similarity (CJK-safe); otherwise it falls back to
+// keyword overlap (v0.1 proxy, Latin-only).
+func (g *SignificanceGate) countRecentCycles(ctx context.Context, event WriteEvent, cycles []WorkingMemoryCycle) int {
+	if g.Embedder != nil {
+		threshold := g.EmbedSimilarityThreshold
+		if threshold <= 0 {
+			threshold = embeddingSimilarityThreshold
+		}
+		count := 0
+		for _, c := range cycles {
+			sim, ok := embeddingSimilarity(ctx, g.Embedder, event.Summary, c.Summary)
+			if ok {
+				if sim >= threshold {
+					count++
+				}
+				continue
+			}
+			// Embedding unavailable (no signal): best-effort keyword fallback.
+			if TokenOverlap(event.Summary, c.Summary) {
+				count++
+			}
+		}
+		return count
+	}
 	count := 0
 	for _, c := range cycles {
 		if TokenOverlap(event.Summary, c.Summary) {
@@ -69,6 +113,32 @@ func (g *SignificanceGate) countRecentCycles(event WriteEvent, cycles []WorkingM
 		}
 	}
 	return count
+}
+
+// embeddingSimilarity returns the cosine similarity between two texts embedded
+// via emb. ok is false when embedding fails or yields a zero-magnitude vector
+// (no semantic signal) — callers then fall back to the lexical token proxy.
+func embeddingSimilarity(ctx context.Context, emb embedder.Embedder, a, b string) (float64, bool) {
+	ea, err := emb.Embed(ctx, a)
+	if err != nil {
+		return 0, false
+	}
+	eb, err := emb.Embed(ctx, b)
+	if err != nil {
+		return 0, false
+	}
+	if len(ea) == 0 || len(eb) == 0 || len(ea) != len(eb) {
+		return 0, false
+	}
+	var normA, normB float64
+	for i := range ea {
+		normA += float64(ea[i]) * float64(ea[i])
+		normB += float64(eb[i]) * float64(eb[i])
+	}
+	if normA == 0 || normB == 0 {
+		return 0, false
+	}
+	return vector.CosineSimilarity(vector.Float32To64(ea), vector.Float32To64(eb)), true
 }
 
 // topicOverlap is a v0.1 approximation for semantic similarity between two

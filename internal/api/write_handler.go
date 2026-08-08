@@ -47,7 +47,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		UserConfirmed: req.UserConfirmed,
 		IsCorrection:  req.IsCorrection,
 	}
-	gateResult := s.SignificanceGate.Evaluate(event, workingMemory)
+	gateResult := s.SignificanceGate.Evaluate(ctx, event, workingMemory)
 
 	if !gateResult.ShouldPersist {
 		respondJSON(w, http.StatusOK, models.WriteResponse{
@@ -162,7 +162,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Link to related memories via RELATES_TO edges.
-	core.LinkOnWrite(ctx, s.Store, memoryID, req.Content.Summary, req.ProjectID, req.Content.EntityID, req.TaskType)
+	core.LinkOnWrite(ctx, s.Embedder, s.Store, memoryID, req.Content.Summary, req.ProjectID, req.Content.EntityID, req.TaskType)
 
 	// Push to working-memory cycles.
 	s.WorkingMemory.Push(req.ProjectID, req.Content.Summary)
