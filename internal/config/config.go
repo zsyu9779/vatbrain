@@ -103,6 +103,7 @@ type WatcherConfig struct {
 	RefinePromptFile  string        // VATBRAIN_WATCHER_REFINE_PROMPT_FILE: custom LLM prompt
 	ClaudeCodeHomeDir string        // VATBRAIN_CLAUDE_CODE_HOME: override home dir
 	OpenCodeMemoryPath string       // VATBRAIN_OPENCODE_MEMORY_PATH
+	HermesHomeDir      string       // VATBRAIN_WATCHER_HERMES_HOME: hermes home (default ~/.hermes)
 }
 
 // LLMConfig holds configuration for LLM API access (Claude).
@@ -209,6 +210,7 @@ func LoadFromEnv() Config {
 			RefinePromptFile:   envStr("VATBRAIN_WATCHER_REFINE_PROMPT_FILE", ""),
 			ClaudeCodeHomeDir:  envStr("VATBRAIN_CLAUDE_CODE_HOME", ""),
 			OpenCodeMemoryPath: envStr("VATBRAIN_OPENCODE_MEMORY_PATH", ""),
+			HermesHomeDir:      envStr("VATBRAIN_WATCHER_HERMES_HOME", ""),
 		},
 	}
 }

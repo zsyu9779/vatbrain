@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -115,6 +116,10 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 
 	// LLM defaults may be overwritten by env vars; just verify they exist.
 	assert.NotEmpty(t, cfg.LLM.Model)
+
+	// Watcher: hermes home defaults to empty → adapter falls back to ~/.hermes
+	assert.Equal(t, "", cfg.Watcher.HermesHomeDir)
+	assert.Equal(t, 300*time.Second, cfg.Watcher.PollInterval)
 }
 
 func TestLoadFromEnv_CustomValues(t *testing.T) {
@@ -123,6 +128,7 @@ func TestLoadFromEnv_CustomValues(t *testing.T) {
 	t.Setenv("WEIGHT_LAMBDA_DECAY", "0.25")
 	t.Setenv("GATE_MIN_CROSS_CYCLE", "5")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("VATBRAIN_WATCHER_HERMES_HOME", "/tmp/hermes-profile")
 
 	cfg := LoadFromEnv()
 	assert.Equal(t, 3000, cfg.Port)
@@ -130,4 +136,5 @@ func TestLoadFromEnv_CustomValues(t *testing.T) {
 	assert.InDelta(t, 0.25, cfg.WeightDecay.LambdaDecay, 1e-9)
 	assert.Equal(t, 5, cfg.SignificanceGate.MinCrossCycleCount)
 	assert.Equal(t, "sk-test", cfg.LLM.APIKey)
+	assert.Equal(t, "/tmp/hermes-profile", cfg.Watcher.HermesHomeDir)
 }

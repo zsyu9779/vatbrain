@@ -270,7 +270,7 @@ func applySignificanceConfig(s *core.SignificanceGate, cfg *config.Config) {
 func buildWatcherProviders(cfg *config.WatcherConfig) []watcher.MemoryProvider {
 	adapterNames := strings.Split(cfg.Adapters, ",")
 	if cfg.Adapters == "all" {
-		adapterNames = []string{"claude-code", "opencode", "cursor"}
+		adapterNames = []string{"claude-code", "opencode", "cursor", "hermes"}
 	}
 
 	enabled := make(map[string]bool)
@@ -291,6 +291,10 @@ func buildWatcherProviders(cfg *config.WatcherConfig) []watcher.MemoryProvider {
 	if enabled["cursor"] {
 		providers = append(providers,
 			adapters.NewCursorProvider(cfg.ClaudeCodeHomeDir))
+	}
+	if enabled["hermes"] {
+		providers = append(providers,
+			adapters.NewHermesProvider(cfg.HermesHomeDir))
 	}
 
 	return providers
