@@ -2,6 +2,8 @@
 
 > 从"被动知识库"到"主动记忆系统"的演进路线。
 > 每个版本有明确的交付物、依赖关系和准入/准出标准。
+>
+> 2026-05-19 竞品调研后补充：下一阶段优先级已收窄为 **面向 coding agent 的 Pitfall-aware memory layer**。版本重排建议见 [`EVOLUTION_PLAN.md`](EVOLUTION_PLAN.md)。
 
 ---
 

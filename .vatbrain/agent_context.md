@@ -8,6 +8,33 @@
 - **语言**: Go (go 1.25.5)
 - **分支**: `feature/agent-memory-watcher`
 
+## 最近工作（2026-05-19）— 下一阶段演进计划
+
+### 本次完成
+
+- 新增 `docs/EVOLUTION_PLAN.md`，基于竞品调研重排下一阶段路线。
+- 核心定位从泛用 AI Agent memory layer 收窄为 **面向 coding agent 的 Pitfall-aware memory layer**。
+- 建议版本顺序：v0.2.1 Watcher GA → v0.2.2 Pitfall Workbench → v0.3 Proactive Risk Injection → v0.3.1 Evaluation Harness → v0.4 Public Developer Experience → v1.0 Team Memory。
+- 在 `docs/ROADMAP.md` 顶部加入演进计划入口。
+
+### 下一步建议
+
+- 先完成 v0.2.1 Watcher GA 和 5 分钟 demo，不再扩大 v0.3 范围。
+- 后续补 `docs/DEMO_SCRIPT.md` 与 `docs/COMPETITIVE_LANDSCAPE.md`，再调整 README 首屏定位。
+
+## 最近工作（2026-05-19）— 业界竞品/相邻项目调研
+
+### 本次结论
+
+- 外部已有多个 AI Agent memory / context infrastructure 项目，赛道已被验证：Mem0、Zep/Graphiti、Letta、Cognee、MIRIX、A-MEM，以及一批面向 coding agent 的 MCP 记忆工具。
+- VatBrain 不应定位为泛用“又一个 memory SDK”，更适合收窄到 **coding agent / agent workbench 的经验记忆层**。
+- 可差异化方向：Pitfall Memory、错误/纠正驱动的 Reconsolidation、显式 Decay/冷却阈值、上下文门控、Agent Memory Watcher 对多工具记忆的同步。
+
+### 建议下一步
+
+- 补一个 `docs/COMPETITIVE_LANDSCAPE.md` 或 README 的 “Why VatBrain” 小节，明确与 Mem0/Zep/Cognee/Letta 的边界。
+- 把 v0.2.1 的 Agent Memory Watcher 做成首个 demo：自动吸收 Claude Code/Cursor/OpenCode 记忆，提炼 pitfall，并在 MCP 检索中注入。
+
 ## 最近工作（2026-05-10/11）— Agent Memory Watcher 实施
 
 ### 已完成
