@@ -12,6 +12,7 @@ import (
 	"github.com/vatbrain/vatbrain/internal/llm"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
+	"github.com/vatbrain/vatbrain/internal/vector"
 )
 
 // ConsolidationEngine implements the sleep consolidation loop described in
@@ -126,7 +127,7 @@ func (e *ConsolidationEngine) runRuleExtraction(
 
 	for _, cl := range clusters {
 		ruleContent := e.extractRule(ctx, cl)
-		accuracy := e.backtest(ctx, cl)
+		accuracy := e.backtest(ctx, emb, cl)
 
 		if accuracy < e.AccuracyThreshold {
 			continue
@@ -278,9 +279,14 @@ func (e *ConsolidationEngine) extractRule(ctx context.Context, cl PatternCluster
 }
 
 // backtest evaluates a candidate rule. If an LLM client is configured, it
-// samples up to 20 held-out episodics and asks the LLM to verify the rule;
-// otherwise returns 1.0 if the cluster meets the minimum size.
-func (e *ConsolidationEngine) backtest(ctx context.Context, cl PatternCluster) float64 {
+// samples up to 20 held-out episodics and asks the LLM to verify the rule.
+// Without an LLM (F3) it runs a cheap embedding-consistency backtest: the
+// candidate rule must be representative of its cluster — the average cosine
+// similarity between the rule text and each cluster episodic must clear
+// AccuracyThreshold, otherwise the rule is not persisted. With no trustworthy
+// signal at all it returns a constant below the threshold, so unverified
+// rules never persist ("dubious → discard").
+func (e *ConsolidationEngine) backtest(ctx context.Context, emb embedder.Embedder, cl PatternCluster) float64 {
 	if e.LLMClient != nil {
 		sampleSize := len(cl.Episodics)
 		if sampleSize > 20 {
@@ -303,11 +309,30 @@ func (e *ConsolidationEngine) backtest(ctx context.Context, cl PatternCluster) f
 			}
 		}
 	}
-	// Fallback: v0.1 min-size check.
-	if len(cl.Episodics) >= e.MinClusterSize {
-		return 1.0
+
+	// No LLM: cheap embedding-consistency backtest.
+	if emb != nil {
+		rule := e.extractRule(ctx, cl)
+		ruleEmb, err := emb.Embed(ctx, rule)
+		if err == nil && vectorHasMagnitude(ruleEmb) {
+			var total float64
+			compared := 0
+			for _, ep := range cl.Episodics {
+				epEmb, epErr := emb.Embed(ctx, ep.Summary)
+				if epErr != nil || !vectorHasMagnitude(epEmb) {
+					continue
+				}
+				total += vector.CosineSimilarity(
+					vector.Float32To64(ruleEmb), vector.Float32To64(epEmb))
+				compared++
+			}
+			if compared > 0 {
+				return total / float64(compared)
+			}
+		}
 	}
-	return 0.0
+	// No trustworthy signal: constant below AccuracyThreshold (never passes).
+	return 0.5
 }
 
 // errToString converts an error to a string, returning empty string for nil.

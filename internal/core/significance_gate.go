@@ -130,15 +130,22 @@ func embeddingSimilarity(ctx context.Context, emb embedder.Embedder, a, b string
 	if len(ea) == 0 || len(eb) == 0 || len(ea) != len(eb) {
 		return 0, false
 	}
-	var normA, normB float64
-	for i := range ea {
-		normA += float64(ea[i]) * float64(ea[i])
-		normB += float64(eb[i]) * float64(eb[i])
-	}
-	if normA == 0 || normB == 0 {
+	if !vectorHasMagnitude(ea) || !vectorHasMagnitude(eb) {
 		return 0, false
 	}
 	return vector.CosineSimilarity(vector.Float32To64(ea), vector.Float32To64(eb)), true
+}
+
+// vectorHasMagnitude reports whether v has any non-zero component. A zero
+// vector (e.g. the stub embedder) carries no semantic signal and must not be
+// treated as a meaningful embedding.
+func vectorHasMagnitude(v []float32) bool {
+	for _, x := range v {
+		if x != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // topicOverlap is a v0.1 approximation for semantic similarity between two

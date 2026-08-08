@@ -112,28 +112,50 @@ func TestExtractRule_SingleEpisodic(t *testing.T) {
 	assert.Contains(t, rule, "one event")
 }
 
-func TestBacktest_SufficientSize(t *testing.T) {
-	e := &ConsolidationEngine{MinClusterSize: 3}
+// F3: without an LLM the backtest is no longer a size-based rubber stamp.
+// With no embedder signal it returns a constant below AccuracyThreshold, so
+// unverified rules never persist on cluster size alone.
+func TestBacktest_NoLLM_NilEmbedder_ConstantBelowThreshold(t *testing.T) {
+	e := &ConsolidationEngine{MinClusterSize: 3, AccuracyThreshold: 0.7}
 	cl := PatternCluster{
 		Episodics: make([]store.EpisodicScanItem, 5),
 	}
-	assert.Equal(t, 1.0, e.backtest(t.Context(), cl))
+	assert.Equal(t, 0.5, e.backtest(t.Context(), nil, cl),
+		"no LLM, no embedder → conservative constant, never passes 0.7")
 }
 
-func TestBacktest_InsufficientSize(t *testing.T) {
-	e := &ConsolidationEngine{MinClusterSize: 3}
+// F3: with an embedder, a coherent cluster (near-identical summaries) scores
+// above the threshold — legitimate patterns still persist.
+func TestBacktest_EmbeddingConsistency_High(t *testing.T) {
+	e := &ConsolidationEngine{MinClusterSize: 3, AccuracyThreshold: 0.7}
 	cl := PatternCluster{
-		Episodics: make([]store.EpisodicScanItem, 2),
+		ProjectID: "p",
+		TaskType:  models.TaskTypeDebug,
+		Episodics: []store.EpisodicScanItem{
+			{Summary: "并发问题通常出在锁粒度，要仔细检查锁的范围和持有时间"},
+			{Summary: "并发问题出在锁粒度上，需要仔细检查锁的范围与持有时间"},
+			{Summary: "并发问题一般出在锁粒度，应该仔细检查锁的范围和持有时间"},
+		},
 	}
-	assert.Equal(t, 0.0, e.backtest(t.Context(), cl))
+	score := e.backtest(t.Context(), runeEmbedder{}, cl)
+	assert.GreaterOrEqual(t, score, 0.7, "coherent cluster must pass the backtest")
 }
 
-func TestBacktest_ExactlyMinSize(t *testing.T) {
-	e := &ConsolidationEngine{MinClusterSize: 3}
+// F3: an incoherent cluster (mixed topics) scores below the threshold and its
+// rule must not be persisted.
+func TestBacktest_EmbeddingConsistency_Low(t *testing.T) {
+	e := &ConsolidationEngine{MinClusterSize: 3, AccuracyThreshold: 0.7}
 	cl := PatternCluster{
-		Episodics: make([]store.EpisodicScanItem, 3),
+		ProjectID: "p",
+		TaskType:  models.TaskTypeDebug,
+		Episodics: []store.EpisodicScanItem{
+			{Summary: "数据库连接池耗尽导致请求超时"},
+			{Summary: "前端组件渲染性能优化"},
+			{Summary: "CI 流水线构建缓存失效"},
+		},
 	}
-	assert.Equal(t, 1.0, e.backtest(t.Context(), cl))
+	score := e.backtest(t.Context(), runeEmbedder{}, cl)
+	assert.Less(t, score, 0.7, "incoherent cluster must fail the backtest")
 }
 
 func TestDefaultConsolidationEngine(t *testing.T) {
@@ -146,7 +168,9 @@ func TestDefaultConsolidationEngine(t *testing.T) {
 func TestConsolidationEngine_Run(t *testing.T) {
 	s := memory.NewStore()
 	ctx := context.Background()
-	emb := embedder.NewStubEmbedder()
+	// F3: the rune embedder yields a real similarity signal, so the coherent
+	// cluster below passes the embedding-consistency backtest.
+	emb := runeEmbedder{}
 	now := time.Now()
 
 	// Write 4 episodic memories with same (project, task_type) to exceed MinClusterSize=3.
@@ -180,6 +204,43 @@ func TestConsolidationEngine_Run(t *testing.T) {
 	sems, semErr := s.SearchSemantic(ctx, store.SemanticSearchRequest{Limit: 10})
 	require.NoError(t, semErr)
 	assert.NotEmpty(t, sems, "expected semantic memory to be created")
+}
+
+// F3 acceptance: without an LLM and without a real embedding signal (stub
+// yields zero vectors), consolidation must NOT bulk-persist unverified rules.
+func TestConsolidationEngine_Run_NoSignal_NoRulesPersisted(t *testing.T) {
+	s := memory.NewStore()
+	ctx := context.Background()
+	emb := embedder.NewStubEmbedder()
+	now := time.Now()
+
+	// Same shape as TestConsolidationEngine_Run — 4 same-pattern memories.
+	for i := 0; i < 4; i++ {
+		mem := &models.EpisodicMemory{
+			ID:         uuid.New(),
+			ProjectID:  "cons-proj",
+			TaskType:   models.TaskTypeDebug,
+			Summary:    "debug session " + string(rune('a'+i)),
+			SourceType: models.SourceTypeUSER,
+			TrustLevel: 5,
+			Weight:     1.0,
+			CreatedAt:  now,
+		}
+		require.NoError(t, s.WriteEpisodic(ctx, mem))
+	}
+
+	e := &ConsolidationEngine{
+		HoursToScan:       24,
+		MinClusterSize:    3,
+		AccuracyThreshold: 0.7,
+	}
+
+	result, err := e.Run(ctx, s, emb)
+	require.NoError(t, err)
+	assert.Equal(t, 4, result.EpisodicsScanned)
+	assert.Equal(t, 1, result.CandidateRulesFound, "cluster exists but fails backtest")
+	assert.Equal(t, 0, result.RulesPersisted,
+		"no API key + no embedding signal → no unverified rules persisted")
 }
 
 func TestConsolidationEngine_Run_NoEpisodics(t *testing.T) {
@@ -280,7 +341,7 @@ func TestBacktest_LLM_ValidScore(t *testing.T) {
 	for i := range cl.Episodics {
 		cl.Episodics[i] = makeScanResult("p", "debug", "event")
 	}
-	score := e.backtest(t.Context(), cl)
+	score := e.backtest(t.Context(), nil, cl)
 	assert.InDelta(t, 0.85, score, 0.01)
 }
 
@@ -295,9 +356,10 @@ func TestBacktest_LLM_InvalidResponse(t *testing.T) {
 	for i := range cl.Episodics {
 		cl.Episodics[i] = makeScanResult("p", "debug", "event")
 	}
-	score := e.backtest(t.Context(), cl)
-	// Fallback: min-size check passes.
-	assert.Equal(t, 1.0, score)
+	score := e.backtest(t.Context(), nil, cl)
+	// Fallback (F3): unparseable LLM output → no signal → constant below
+	// threshold, rule not persisted.
+	assert.Equal(t, 0.5, score)
 }
 
 func TestBacktest_LLM_SmallSample(t *testing.T) {
@@ -311,7 +373,7 @@ func TestBacktest_LLM_SmallSample(t *testing.T) {
 	for i := range cl.Episodics {
 		cl.Episodics[i] = makeScanResult("p", "debug", "event")
 	}
-	score := e.backtest(t.Context(), cl)
+	score := e.backtest(t.Context(), nil, cl)
 	// Sample size < 3 returns 0.0 with LLM.
 	assert.Equal(t, 0.0, score)
 }
@@ -386,8 +448,10 @@ func TestConsolidationEngine_Run_WithPitfallExtractor(t *testing.T) {
 	result, err := e.Run(ctx, s, emb)
 	require.NoError(t, err)
 	assert.Equal(t, 3, result.EpisodicsScanned)
-	// Rule extraction still runs for the 3-cluster.
-	assert.Equal(t, 1, result.RulesPersisted)
+	// Rule extraction still runs for the 3-cluster, but F3 backtest rejects
+	// it: mock LLM output is not a numeric score and the stub embedder yields
+	// no signal → nothing persists unverified.
+	assert.Equal(t, 0, result.RulesPersisted)
 	// PitfallExtractor was set, so runPitfallExtraction was called.
 	// With MinClusterSize=9999, no pitfalls are extracted.
 	assert.Equal(t, 0, result.PitfallsExtracted)
