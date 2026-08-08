@@ -23,7 +23,8 @@ func TestContextualGating_HardConstraints_FiltersByProject(t *testing.T) {
 	assert.Len(t, results, 1)
 }
 
-func TestContextualGating_HardConstraints_FiltersByLanguage(t *testing.T) {
+// F2: language is NOT a hard constraint — cross-stack lessons transfer.
+func TestContextualGating_LanguageNotHardFiltered(t *testing.T) {
 	cg := &ContextualGating{}
 	candidates := []models.EpisodicMemory{
 		{ID: uuid.New(), ProjectID: "p", Language: "go", Weight: 1.0},
@@ -31,7 +32,58 @@ func TestContextualGating_HardConstraints_FiltersByLanguage(t *testing.T) {
 	}
 	ctx := models.SearchContext{ProjectID: "p", Language: "go"}
 	results := cg.ApplyHardConstraints(candidates, ctx, models.CoolingThreshold)
-	assert.Len(t, results, 1)
+	assert.Len(t, results, 2, "both languages should survive the hard pass")
+}
+
+// F2: language matching is rewarded as a soft weight (+10%), not enforced.
+func TestContextualGating_SoftWeights_LanguageBoost(t *testing.T) {
+	cg := &ContextualGating{}
+	candidates := []HardFilterResult{
+		{MemoryID: "go-mem", Weight: 1.0, Language: "go"},
+		{MemoryID: "py-mem", Weight: 1.0, Language: "python"},
+	}
+	ctx := models.SearchContext{ProjectID: "p", Language: "go"}
+	results := cg.ApplySoftWeights(candidates, ctx)
+	assert.InDelta(t, 1.1, results[0].Weight, 1e-9, "same-language match gets +10%")
+	assert.InDelta(t, 1.0, results[1].Weight, 1e-9, "cross-language candidate passes unboosted")
+}
+
+// F2 acceptance: a Go-context search must retrieve a Python project's generic
+// concurrency lesson (same project, different language) — visible via stats.
+func TestRetrievalEngine_CrossLanguageHit(t *testing.T) {
+	e := DefaultRetrievalEngine()
+
+	goID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	pyID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+	req := RetrieveRequest{
+		Query:          "concurrency lock granularity",
+		QueryEmbedding: []float32{0.8, 0.2},
+		Context: models.SearchContext{
+			ProjectID: "shared-project",
+			Language:  "go",
+		},
+		EpisodicCandidates: []models.EpisodicMemory{
+			{ID: goID, ProjectID: "shared-project", Language: "go", Weight: 2.0},
+			// Generic lesson recorded while working in Python — must survive gating.
+			{ID: pyID, ProjectID: "shared-project", Language: "python", Weight: 1.0},
+		},
+		CandidateEmbeddings: map[string][]float32{
+			goID.String(): {0.7, 0.3},
+			pyID.String(): {0.6, 0.4},
+		},
+		TopK:             2,
+		CoolingThreshold: models.CoolingThreshold,
+	}
+
+	result := e.Retrieve(context.Background(), req)
+
+	assert.Equal(t, 2, result.FilterStats.TotalCandidates)
+	assert.Equal(t, 2, result.FilterStats.AfterFilter,
+		"cross-language candidate must not be hard-excluded")
+	assert.Len(t, result.Results, 2, "both memories should rank")
+	// go memory ranks first: higher weight + language boost.
+	assert.Equal(t, goID.String(), result.Results[0].MemoryID)
 }
 
 func TestContextualGating_ExcludesObsoleted(t *testing.T) {

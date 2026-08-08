@@ -12,7 +12,9 @@ import (
 // DESIGN_PRINCIPLES.md Section 4.1.
 //
 // Stage 1 (Contextual Gating): narrow the candidate pool using cheap constraints —
-// project_id + language hard-filter, task_type soft-weight.
+// project_id hard-filter; language and task_type soft-weight. Language is NOT
+// a hard constraint: cross-stack lessons (e.g. "concurrency bugs usually come
+// from lock granularity") retain transfer value across languages.
 // Stage 2 (Semantic Ranking): rank the survivors by vector cosine similarity.
 type RetrievalEngine struct {
 	// ContextCacheTTL is how long to cache Stage 1 results. Default 1 hour.
@@ -40,10 +42,14 @@ type ContextualGating struct{}
 type HardFilterResult struct {
 	MemoryID string
 	Weight   float64
+	// Language of the surviving memory, carried through so soft weights can
+	// reward same-language matches without hard-excluding others.
+	Language string
 }
 
-// ApplyHardConstraints returns the list of memory IDs that match project_id and
-// language, have not been obsoleted, and are above the cooling threshold.
+// ApplyHardConstraints returns the list of memory IDs that match project_id,
+// have not been obsoleted, and are above the cooling threshold. Language is
+// intentionally NOT a hard constraint (F2): cross-stack experiences transfer.
 func (cg *ContextualGating) ApplyHardConstraints(
 	candidates []models.EpisodicMemory,
 	ctx models.SearchContext,
@@ -52,9 +58,6 @@ func (cg *ContextualGating) ApplyHardConstraints(
 	var results []HardFilterResult
 	for _, m := range candidates {
 		if m.ProjectID != ctx.ProjectID {
-			continue
-		}
-		if m.Language != ctx.Language {
 			continue
 		}
 		if m.ObsoletedAt != nil {
@@ -66,13 +69,15 @@ func (cg *ContextualGating) ApplyHardConstraints(
 		results = append(results, HardFilterResult{
 			MemoryID: m.ID.String(),
 			Weight:   m.Weight,
+			Language: m.Language,
 		})
 	}
 	return results
 }
 
 // ApplySoftWeights adjusts candidate weights based on context signals.
-// A task_type match boosts weight by +20%.
+// A task_type context boosts weight by +20%; a same-language match by +10%.
+// Cross-language candidates pass through unboosted but are never excluded.
 func (cg *ContextualGating) ApplySoftWeights(
 	candidates []HardFilterResult,
 	ctx models.SearchContext,
@@ -83,9 +88,13 @@ func (cg *ContextualGating) ApplySoftWeights(
 		if ctx.TaskType.IsValid() {
 			boost += 0.2
 		}
+		if ctx.Language != "" && c.Language == ctx.Language {
+			boost += 0.1
+		}
 		adjusted[i] = HardFilterResult{
 			MemoryID: c.MemoryID,
 			Weight:   c.Weight * boost,
+			Language: c.Language,
 		}
 	}
 	return adjusted
