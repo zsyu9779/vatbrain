@@ -46,6 +46,12 @@ _PREFETCH_TIMEOUT_S = 7.0
 class VatBrainMemoryProvider(MemoryProvider):
     """hermes MemoryProvider that mirrors turns into VatBrain via stdio JSON-RPC."""
 
+    # Class-level defaults so is_available()/backup_paths() work BEFORE
+    # initialize() runs — hermes calls is_available() at activation, then
+    # initialize() only if it returned True (agent_init.py activation chain).
+    _hermes_home = ""
+    _session_id = ""
+
     @property
     def name(self) -> str:
         return "vatbrain"
