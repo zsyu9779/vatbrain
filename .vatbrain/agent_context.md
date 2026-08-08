@@ -29,7 +29,8 @@
 - **Hermes 集成 Phase 1-6 全部完成并推送**（watcher/provider/读路径/生命周期/Workbench+风险注入/评测）
 - 工作树干净；提交：`7d88dcc`(P2) `713e726`(P3) `575533b`(P4) `1142c02`(P5) `ecb6453`(P6) + `89a8d13`(entryHash 补丁)
 - 真实安装已同步：`~/.hermes/plugins/vatbrain/` + `~/.hermes/vatbrain/bin/vatbrain-provider`
-- **待用户授权**：激活 `~/.hermes/config.yaml` memory.provider（唯一未落地的验收项，被权限门拦下）
+- **✅ 已激活（用户授权）**：`~/.hermes/config.yaml` 加 `memory.provider: vatbrain`（备份 `config.yaml.bak-vatbrain`）；激活链验证通过——config 读到 provider=vatbrain、插件发现+is_available=True、daemon spawn+initialize OK（`Memory provider 'vatbrain' registered (1 tools)`）。附发现并修复激活崩溃 bug（插件 `is_available()` 在 initialize 前调用会 AttributeError，类级默认值修复，已提交推送）
+- 下次真实 hermes 交互会话将出现 "Memory provider 'vatbrain' activated" 日志；TUI 非终端运行会提前退出是环境限制非配置问题
 
 ## 最近工作（2026-08-08）— Phase 5 Pitfall Workbench + v0.3 风险注入
 
