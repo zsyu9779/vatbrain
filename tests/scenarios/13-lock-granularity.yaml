@@ -1,0 +1,19 @@
+id: lock-granularity
+title: "锁粒度过粗串行化整个缓存"
+language: go
+task_type: refactor
+episodes:
+  - "并发问题通常出在锁粒度——全表锁会把读操作也串行化"
+pitfall:
+  entity_id: func:SearchEpisodic
+  entity_type: FUNCTION
+  signature: "SearchEpisodic 持锁扫描，读并发被串行化"
+  root_cause: CONCURRENCY
+  fix_strategy: "用 RWMutex 或分片锁，只锁写路径"
+  occurrence_count: 2
+  trust_level: 4
+query: "Go 锁粒度 读串行化 性能"
+sessions: 150
+base_error_rate: 0.7
+avoidance_rate: 0.7
+relevance: 0.8

@@ -1,0 +1,19 @@
+id: python-env
+title: "Python 依赖装在系统解释器而非 venv"
+language: python
+task_type: debug
+episodes:
+  - "项目依赖必须装在虚拟环境，系统解释器安装会污染全局"
+pitfall:
+  entity_id: pyproject.toml
+  entity_type: CONFIG
+  signature: "pip install 到系统解释器导致依赖版本冲突"
+  root_cause: CONFIG
+  fix_strategy: "使用 .venv，python -m pip install"
+  occurrence_count: 3
+  trust_level: 4
+query: "Python pip install venv 依赖冲突"
+sessions: 170
+base_error_rate: 0.8
+avoidance_rate: 0.75
+relevance: 0.85

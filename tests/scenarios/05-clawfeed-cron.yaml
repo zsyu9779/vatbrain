@@ -1,0 +1,19 @@
+id: clawfeed-cron
+title: "ClawFeed cron deliver:local 禁止改"
+language: zh
+task_type: refactor
+episodes:
+  - "cron job e9470729f5bf 的 deliver:'local' 是正确的——评估结果存本地，推送由 clawfeed-push-v3.py 处理"
+pitfall:
+  entity_id: clawfeed_cron
+  entity_type: CONFIG
+  signature: "把 deliver 改成其他值会破坏推送链路"
+  root_cause: CONFIG
+  fix_strategy: "保持 deliver:'local'，推送只走 clawfeed-push-v3.py"
+  occurrence_count: 2
+  trust_level: 4
+query: "ClawFeed cron deliver 改配置"
+sessions: 150
+base_error_rate: 0.7
+avoidance_rate: 0.7
+relevance: 0.85

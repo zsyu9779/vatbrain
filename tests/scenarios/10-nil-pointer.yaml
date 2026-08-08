@@ -1,0 +1,19 @@
+id: nil-pointer
+title: "Go nil 指针解引用——错误处理必须先判空"
+language: go
+task_type: debug
+episodes:
+  - "WriteEpisodic 返回错误后未检查 nil，直接解引用 panic"
+pitfall:
+  entity_id: func:GetEpisodic
+  entity_type: FUNCTION
+  signature: "GetEpisodic 未找到返回 nil 且 err==nil 时解引用 panic"
+  root_cause: LOGIC_ERROR
+  fix_strategy: "解引用前判空，或用 errors.Is 检查 ErrNotFound"
+  occurrence_count: 4
+  trust_level: 4
+query: "Go nil pointer panic GetEpisodic"
+sessions: 200
+base_error_rate: 0.8
+avoidance_rate: 0.8
+relevance: 0.9

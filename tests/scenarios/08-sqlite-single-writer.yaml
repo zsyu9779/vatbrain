@@ -1,0 +1,19 @@
+id: sqlite-single-writer
+title: "SQLite 单写者约束——并发写需串行化"
+language: go
+task_type: debug
+episodes:
+  - "SQLite 只允许一个写者；并发写导致 database is locked"
+pitfall:
+  entity_id: func:WriteEpisodic
+  entity_type: FUNCTION
+  signature: "多个 goroutine 同时写 SQLite 报 database is locked"
+  root_cause: CONCURRENCY
+  fix_strategy: "SetMaxOpenConns(1) 或串行化写路径"
+  occurrence_count: 3
+  trust_level: 4
+query: "SQLite concurrent write database is locked"
+sessions: 200
+base_error_rate: 0.8
+avoidance_rate: 0.8
+relevance: 0.9

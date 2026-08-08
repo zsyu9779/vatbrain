@@ -1,0 +1,19 @@
+id: docker-network
+title: "容器间通信未共享网络"
+language: zh
+task_type: feature
+episodes:
+  - "ClawFeed 架构：橘子 Docker Node.js 服务，本机脚本通过 HTTP 调用，需共享网络"
+pitfall:
+  entity_id: docker-compose.yml
+  entity_type: CONFIG
+  signature: "两个容器不在同一网络时 HTTP 调用不通"
+  root_cause: CONFIG
+  fix_strategy: "docker-compose 声明同一 network 或用 host 网络"
+  occurrence_count: 2
+  trust_level: 3
+query: "Docker 容器 HTTP 调用不通 网络"
+sessions: 140
+base_error_rate: 0.7
+avoidance_rate: 0.7
+relevance: 0.8

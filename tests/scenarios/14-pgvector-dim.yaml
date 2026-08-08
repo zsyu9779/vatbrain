@@ -1,0 +1,19 @@
+id: pgvector-dim
+title: "pgvector 向量维度不匹配导致查询报错"
+language: go
+task_type: debug
+episodes:
+  - "pgvector 插入/查询向量维度必须与列定义一致"
+pitfall:
+  entity_id: pkg:pgvector
+  entity_type: API
+  signature: "embedding 维度不一致报 vector of wrong dimensions"
+  root_cause: CONTRACT_VIOLATION
+  fix_strategy: "统一 embedding 维度，写入前校验 len"
+  occurrence_count: 2
+  trust_level: 3
+query: "pgvector wrong dimensions embedding"
+sessions: 140
+base_error_rate: 0.7
+avoidance_rate: 0.7
+relevance: 0.8

@@ -1,0 +1,19 @@
+id: api-throttle
+title: "LLM API 节流重试避免 429"
+language: go
+task_type: feature
+episodes:
+  - "LLM API 有速率限制，批量调用需节流 + 指数退避重试"
+pitfall:
+  entity_id: pkg:llm
+  entity_type: API
+  signature: "并发打满配额报 429 rate limit，无重试直接失败"
+  root_cause: RESOURCE_EXHAUSTION
+  fix_strategy: "每会话节流 + 指数退避重试，监控剩余配额"
+  occurrence_count: 3
+  trust_level: 4
+query: "LLM API 429 rate limit 节流重试"
+sessions: 180
+base_error_rate: 0.8
+avoidance_rate: 0.75
+relevance: 0.85

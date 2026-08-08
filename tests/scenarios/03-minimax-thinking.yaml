@@ -1,0 +1,19 @@
+id: minimax-thinking
+title: "MiniMax thinking block 消耗巨大，max_tokens 必须 8000"
+language: zh
+task_type: debug
+episodes:
+  - "MiniMax M2.7 API：thinking block 消耗巨大（~5300 tokens 不可禁用），max_tokens 必须设到 8000 才能同时输出 thinking + text"
+pitfall:
+  entity_id: minimax_api
+  entity_type: API
+  signature: "max_tokens 设到 4000 时 thinking 后 text 为空"
+  root_cause: CONTRACT_VIOLATION
+  fix_strategy: "max_tokens 设到 8000；JSON 截断时用 bracket depth parser 恢复"
+  occurrence_count: 3
+  trust_level: 4
+query: "MiniMax API max_tokens thinking text 为空"
+sessions: 160
+base_error_rate: 0.75
+avoidance_rate: 0.8
+relevance: 0.9

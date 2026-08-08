@@ -1,0 +1,19 @@
+id: goroutine-race
+title: "共享 map 并发写触发 data race"
+language: go
+task_type: debug
+episodes:
+  - "多个 goroutine 无锁写同一 map 报 fatal error: concurrent map writes"
+pitfall:
+  entity_id: func:NewWorkingMemoryBuffer
+  entity_type: FUNCTION
+  signature: "并发 Push 同一 project 的 map 写竞态"
+  root_cause: CONCURRENCY
+  fix_strategy: "给 buffer 加 mutex，或改用 sync.Map"
+  occurrence_count: 3
+  trust_level: 4
+query: "Go concurrent map writes race"
+sessions: 180
+base_error_rate: 0.8
+avoidance_rate: 0.8
+relevance: 0.9

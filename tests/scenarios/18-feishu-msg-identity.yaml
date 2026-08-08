@@ -1,0 +1,19 @@
+id: feishu-msg-identity
+title: "飞书消息必须用广播机器人身份发送"
+language: zh
+task_type: feature
+episodes:
+  - "播报只允许用 cli_a9722632f5b8dcbb 广播机器人发送，个人 CLI 不能发播报"
+pitfall:
+  entity_id: feishu_broadcast
+  entity_type: API
+  signature: "用个人身份发播报会泄露会话且被拒"
+  root_cause: CONFIG
+  fix_strategy: "--as bot + 指定广播机器人 app id"
+  occurrence_count: 2
+  trust_level: 4
+query: "飞书 播报 机器人身份 发送"
+sessions: 150
+base_error_rate: 0.75
+avoidance_rate: 0.75
+relevance: 0.85

@@ -1,0 +1,19 @@
+id: clawfeed-fields
+title: "evaluator 输出字段名 total_score 而非 overall_score"
+language: zh
+task_type: debug
+episodes:
+  - "evaluator 输出字段：total_score（0-50）而非 overall_score；短评用 key_takeaway/summary_excerpt 而非 comment"
+pitfall:
+  entity_id: clawfeed_evaluator
+  entity_type: API
+  signature: "字段名写 overall_score/comment 会导致解析为空"
+  root_cause: CONTRACT_VIOLATION
+  fix_strategy: "用 total_score 与 key_takeaway/summary_excerpt"
+  occurrence_count: 3
+  trust_level: 4
+query: "evaluator 输出字段名 解析"
+sessions: 170
+base_error_rate: 0.85
+avoidance_rate: 0.75
+relevance: 0.85

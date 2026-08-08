@@ -1,0 +1,19 @@
+id: openclaw-parser
+title: "JSON 截断用 bracket depth parser 恢复"
+language: zh
+task_type: debug
+episodes:
+  - "MiniMax 部分 JSON 截断时（char 1442 处），用 bracket depth parser 从 partial text 恢复"
+pitfall:
+  entity_id: clawfeed-push-v3.py
+  entity_type: MODULE
+  signature: "直接 json.loads 截断文本抛 JSONDecodeError"
+  root_cause: LOGIC_ERROR
+  fix_strategy: "用 bracket depth parser 从 partial text 恢复后解析"
+  occurrence_count: 2
+  trust_level: 3
+query: "JSON 截断 bracket depth parser 恢复"
+sessions: 160
+base_error_rate: 0.75
+avoidance_rate: 0.7
+relevance: 0.8

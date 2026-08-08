@@ -1,0 +1,19 @@
+id: yaml-tabs
+title: "YAML 缩进用 tab 导致解析失败"
+language: zh
+task_type: debug
+episodes:
+  - "YAML 不允许 tab 缩进；配置解析失败时先查缩进"
+pitfall:
+  entity_id: config.yaml
+  entity_type: CONFIG
+  signature: "用 tab 缩进报 'found character that cannot start any token'"
+  root_cause: CONFIG
+  fix_strategy: "统一空格缩进，编辑器设 expandtab"
+  occurrence_count: 3
+  trust_level: 4
+query: "YAML tab 缩进 解析失败"
+sessions: 150
+base_error_rate: 0.75
+avoidance_rate: 0.8
+relevance: 0.85

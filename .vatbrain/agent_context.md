@@ -4,13 +4,31 @@
 
 ## 项目状态
 
-- **阶段**: Hermes 集成 Phase 5 — Pitfall Workbench + v0.3 风险注入 ✅ 完成（未提交）；Phase 2/3/4 已提交推送
+- **阶段**: Hermes 集成 Phase 6 — 评测 harness ✅ 完成（未提交）；Phase 2-5 已提交推送
 - **语言**: Go (go 1.25.5) + Python（hermes 插件）
 - **分支**: `feature/agent-memory-watcher`（本地领先 origin 1 commit，未推送）
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点
 - **hermes 源码**: 本机 `~/.hermes/hermes-agent`（HEAD 52920747e，工作树干净）
 - **hermes 插件**: 已安装 `~/.hermes/plugins/vatbrain/` + daemon 二进制 `~/.hermes/vatbrain/bin/vatbrain-provider`
 - **战略决策（2026-08-08）**: Neo4j+pgvector 重型存储将弃用，后续只投入 SQLite 路径
+
+## 最近工作（2026-08-08）— Phase 6 评测 harness（20 场景）
+
+### 本次完成
+
+1. **`internal/eval/`**（新）：
+   - `eval.go`：Scenario 模型 + YAML 加载 + 确定性模拟（两臂：无注入/有注入）+ `RepeatedErrorReductionRate`/`InterferenceRate` 指标聚合
+   - `eval_test.go`：20 场景逐一**真实管道验证**（种入 store → `provider.RetrievePitfalls` 命中该场景 pitfall）+ 确定性模拟（seed=42）+ 验收断言
+2. **`tests/scenarios/*.yaml`**：20 个手工构造场景（OpenClash/MiniMax/ClawFeed/飞书真实模式 + SQLite 单写者/nil 指针/context 取消/map 竞态/锁粒度/pgvector 维度/YAML tab/venv/Docker 网络/API 节流）
+3. **验收结果**：`20 scenarios | reduction=57.4% interference=14.8%`——重复错误减少率可测（>0，断言≥50%）、干扰率 < 30% ✅
+4. **文档**：`docs/v0.2.1/tech-specs/03-evaluation-harness.md`
+5. `go test ./internal/...` 21/21 包全绿
+
+### 当前状态
+
+- 本地领先 origin 1 commit（Phase 6）未提交未推送
+- **Hermes 集成 Phase 1-6 全部完成**（watcher/provider/读路径/生命周期/Workbench+风险注入/评测）
+- 待用户授权激活 `~/.hermes/config.yaml` memory.provider（唯一未落地的验收项）
 
 ## 最近工作（2026-08-08）— Phase 5 Pitfall Workbench + v0.3 风险注入
 
@@ -104,10 +122,9 @@
 
 ## 下一步
 
-1. 提交推送 Phase 3（独立 commit）
-2. **待用户授权**：激活 `~/.hermes/config.yaml` `memory.provider: vatbrain`（手动或授权我做），下次 hermes 启动验证 activated 日志 + `<memory-context>` 注入
-3. Phase 4 — 生命周期：`on_session_end`（→整合）/`on_memory_write`（镜像，source=user_explicit）/`on_session_switch`（重绑）
-4. Phase 5 — Pitfall Workbench（状态机）+ v0.3 风险注入；Phase 6 — 评测
+1. 提交推送 Phase 6（独立 commit）→ Hermes 集成全部完成
+2. **待用户授权**：激活 `~/.hermes/config.yaml` `memory.provider: vatbrain`（手动或授权我做），下次 hermes 启动验证 "Memory provider 'vatbrain' activated" 日志 + `<memory-context>` 注入 + prepare_edit_context 工具可用
+3. 后续可选：真实 hermes 会话评测（eval harness 已提供确定性替代）；v0.2.1 GA 准出（opencode adapter 补齐）
 
 ## 已知问题
 

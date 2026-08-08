@@ -1,0 +1,19 @@
+id: feishu-ids
+title: "飞书 CLI ID 不可混用（个人 vs 广播机器人）"
+language: zh
+task_type: feature
+episodes:
+  - "cli_aa8ae18fe078dcc4=个人飞书 CLI（张诗雨）；cli_a9722632f5b8dcbb=ClawFeed 广播机器人（仅发播报）。三个 ID 绝对不能混用"
+pitfall:
+  entity_id: feishu_app_ids
+  entity_type: API
+  signature: "混用 app ID 会把播报发成个人身份或失败"
+  root_cause: CONFIG
+  fix_strategy: "个人操作用个人 ID，播报必须用 cli_a9722632f5b8dcbb"
+  occurrence_count: 3
+  trust_level: 5
+query: "飞书 广播 机器人 app id"
+sessions: 140
+base_error_rate: 0.8
+avoidance_rate: 0.8
+relevance: 0.9

@@ -1,0 +1,19 @@
+id: clawfeed-script
+title: "ClawFeed 推送必须用 clawfeed-push-v3.py（--as bot）"
+language: zh
+task_type: debug
+episodes:
+  - "ClawFeed 播报正确脚本是 clawfeed-push-v3.py（--as bot，专用广播机器人）；clawfeed-push-feishu.py 是旧脚本勿用"
+pitfall:
+  entity_id: clawfeed-push-v3.py
+  entity_type: MODULE
+  signature: "用旧脚本 clawfeed-push-feishu.py 会以用户身份发送，而非广播机器人"
+  root_cause: CONFIG
+  fix_strategy: "使用 clawfeed-push-v3.py --as bot"
+  occurrence_count: 4
+  trust_level: 5
+query: "ClawFeed 推送用哪个脚本 广播"
+sessions: 200
+base_error_rate: 0.9
+avoidance_rate: 0.85
+relevance: 0.95

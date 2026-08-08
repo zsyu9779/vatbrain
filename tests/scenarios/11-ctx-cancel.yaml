@@ -1,0 +1,19 @@
+id: ctx-cancel
+title: "Context 取消未传播导致 goroutine 泄漏"
+language: go
+task_type: refactor
+episodes:
+  - "所有 I/O 必须接受 context.Context；取消要沿调用链传播"
+pitfall:
+  entity_id: pkg:db
+  entity_type: MODULE
+  signature: "后台 goroutine 不监听 ctx.Done 会泄漏"
+  root_cause: RESOURCE_EXHAUSTION
+  fix_strategy: "select ctx.Done() + 传递带超时的 context"
+  occurrence_count: 3
+  trust_level: 4
+query: "Go context cancel goroutine leak"
+sessions: 150
+base_error_rate: 0.75
+avoidance_rate: 0.75
+relevance: 0.85

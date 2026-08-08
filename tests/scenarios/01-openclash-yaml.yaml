@@ -1,0 +1,19 @@
+id: openclash-yaml
+title: "OpenClash 覆写脚本必须用 Ruby YAML 解析，而非文本 gsub"
+language: zh
+task_type: debug
+episodes:
+  - "软路由 OpenClash 覆写脚本用 Ruby YAML 解析，不要用文本 gsub"
+pitfall:
+  entity_id: openclash_custom_overwrite.sh
+  entity_type: MODULE
+  signature: "文本 gsub 覆写脚本会把 VLESS 节点改写成无效 VMess 节点"
+  root_cause: CONFIG
+  fix_strategy: "用 Ruby YAML.load_file→dump 解析，保留订阅源注释"
+  occurrence_count: 3
+  trust_level: 4
+query: "OpenClash 覆写脚本 改 VLESS 节点 Ruby YAML 解析"
+sessions: 200
+base_error_rate: 0.85
+avoidance_rate: 0.75
+relevance: 0.9

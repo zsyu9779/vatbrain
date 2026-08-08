@@ -1,0 +1,19 @@
+id: neo4j-index
+title: "Neo4j 按属性查节点前确认有索引"
+language: go
+task_type: refactor
+episodes:
+  - "Neo4j 按非索引属性查询会全图扫描，慢查询导致超时"
+pitfall:
+  entity_id: pkg:neo4jpg
+  entity_type: MODULE
+  signature: "MATCH (n:Node {prop: $x}) 无索引时性能退化"
+  root_cause: RESOURCE_EXHAUSTION
+  fix_strategy: "为查询属性建索引或用 id 主键查询"
+  occurrence_count: 2
+  trust_level: 3
+query: "Neo4j 属性查询慢 索引"
+sessions: 160
+base_error_rate: 0.7
+avoidance_rate: 0.7
+relevance: 0.8

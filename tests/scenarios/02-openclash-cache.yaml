@@ -1,0 +1,19 @@
+id: openclash-cache
+title: "OpenClash 订阅缓存污染后需清缓存并重启"
+language: zh
+task_type: debug
+episodes:
+  - "OpenClash 修复后清缓存重启：rm -f /etc/openclash/history/*.db /etc/openclash/cache.db && /etc/init.d/openclash restart"
+pitfall:
+  entity_id: openclash_cache.db
+  entity_type: CONFIG
+  signature: "订阅缓存 cache.db 与 history/*.db 存储错误配置，不清缓存重启不生效"
+  root_cause: CONFIG
+  fix_strategy: "清 cache.db + history/*.db 后重启 openclash"
+  occurrence_count: 2
+  trust_level: 4
+query: "OpenClash 改了配置不生效 缓存"
+sessions: 180
+base_error_rate: 0.8
+avoidance_rate: 0.7
+relevance: 0.85
