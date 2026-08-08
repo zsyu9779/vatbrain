@@ -7,6 +7,52 @@
 
 ---
 
+## 0. 会话检查点（2026-08-08 第 2 次会话中断于此，机器交接）
+
+> **新会话从本段开始读**。本段之后的原始内容保留作历史/参考。
+
+### 已完成（全部已推送 `origin/feature/agent-memory-watcher`，工作树干净）
+
+| 项 | 提交 | 说明 |
+|---|---|---|
+| §2.4 commit A（推送 watcher） | `dbf41a1` | ✅ |
+| §2.4 commit B（测试文件+coverage） | `cdbef81` | ✅ |
+| §2.4 commit C（neo4jpg 重构） | `bc70988` | ✅ |
+| §2.4 commit D（文档组） | `5b36f8d` | ✅ |
+| **F1** CJK tokenizer → embedding 余弦 | `1712604` | ✅ 含中文回归测试（gate 跨周期 + RELATES_TO 边） |
+| **F2** language 硬过滤 → 软权重 | `2ae7e54` | ✅ 含跨语言命中验收测试 |
+| **F3** backtest 橡皮图章 → embedding 一致性 | `8d2a5db` | ✅ 无信号恒 0.5，永不落库 |
+
+`go test ./internal/...` 全绿；`tests/` 4 个失败均为 Neo4j/Pgvector 基础设施 E2E（预先存在，需 docker-compose 启动）。
+
+### 关键 API 变更（F1/F3 引入，新会话必须知道）
+
+1. `SignificanceGate.Evaluate(ctx, event, workingMemory)` — 新增 ctx 参数；gate 新增 `Embedder`/`EmbedSimilarityThreshold` 字段（`app.go` 已接线 `significanceGate.Embedder = emb`）。
+2. `core.LinkOnWrite(ctx, emb, s, ...)` — 第 2 参数为 `embedder.Embedder`（nil → token 回退）。
+3. `watcher.NewMemoryWatcher(providers, refiner, emb, s, pollInterval, seenMaxEntries)` — 新增 emb。
+4. `ConsolidationEngine.backtest(ctx, emb, cl)` — 无 LLM 时做 embedding 一致性回测，无信号返回 0.5（永不达标）。
+5. `HardFilterResult` 新增 `Language` 字段；language 从硬约束移入软权重（同语言 +10%），project_id 仍硬约束。
+6. 新助手（package core）：`linkSimilarity` / `embeddingSimilarity` / `vectorHasMagnitude`；测试专用 `runeEmbedder{}`（`test_embedder_test.go`，CJK 回归的确定性 embedder）。
+7. 新常量：`embeddingSimilarityThreshold = 0.7`（gate 跨周期与 RELATES_TO 共用，与 consolidation AccuracyThreshold 对齐）、`tokenLinkThreshold = 0.15`。
+
+### 下一步：Phase 1 hermes Watcher 适配器（代码未动笔，设计已读完）
+
+**要写**：`internal/watcher/adapters/hermes.go` + `hermes_test.go` + 装配。
+
+已确认的实现事实：
+- 存储格式（§5.4）：`$HERMES_HOME/memories/MEMORY.md` + `USER.md`；条目分隔符 `"\n§\n"`；块头 `MEMORY (your personal notes)` / `USER PROFILE (who the user is)`（读取时跳过）；无 frontmatter。
+- Provider 接口（`internal/watcher/provider.go`）：`Name() / Description() / Scan(ctx) ([]RawMemory, error) / Status()`。
+- 参考模板：`internal/watcher/adapters/claude_code.go`（Scan → parseFile → RawMemory{SourceURI, Content, ContentHash}）；emit 前调 `HashContent()`。
+- 装配点：`internal/app/app.go` `buildWatcherProviders`（L270-280，`"all"` 名单 `{"claude-code","opencode","cursor"}` → 加 `"hermes"`）；`internal/config/config.go` WatcherConfig（默认值约 L203）。
+- **去重设计要点**：MEMORY.md 是整体原子重写文件 → 条目 SourceURI 必须稳定（建议 `MEMORY.md#<sha256 前 8>` 或索引位），seenSet 按 (SourceURI, ContentHash) 去重，hermes 编辑导致索引漂移时靠 ContentHash 兜底。
+- 路径可配：环境变量（如 `VATBRAIN_WATCHER_HERMES_HOME`），默认 `~/.hermes`（可用 `os.UserHomeDir()`，参考 claude_code 的 homeDir 模式）。
+- 验收（§4 Phase 1）：`~/.hermes/memories/MEMORY.md` 写入 → 5 分钟内可被 vatbrain 检索到；重复轮询无重复条目。默认 poll interval 需 ≤ 5min。
+- 新测试必须含中文用例（§6 纪律）。
+
+**之后**：Phase 2-4 见 §4 表格；F1-F3 的回归护栏（runeEmbedder + 中文用例）是后续所有相似度逻辑的测试模板。
+
+---
+
 ## 1. 已定决策（本次对话确认，不要回退）
 
 | # | 决策 | 理由 |
@@ -96,22 +142,24 @@ internal/store/neo4jpg/neo4jpg_test.go
 
 ## 3. Phase 0 任务单：修三个已知缺陷（改完再建 provider）
 
-### F1 — CJK tokenizer（硬伤，中文内容静默失效）
+> **状态：三项全部完成**（提交见 §0 检查点表格）。以下为原始描述，保留作记录。
+
+### F1 — CJK tokenizer（硬伤，中文内容静默失效）✅ `1712604`
 - 位置：`internal/core/significance_gate.go` —— `IsAlphaNum`（L135-137）只认 `a-z A-Z 0-9`；中文 tokenize 后为空集。
 - 影响：`TokenOverlap`（cross-cycle 门条件）与 `link_on_write.go` 的 `tokenSimilarity`（RELATES_TO 边）对中文全部失效。
 - 改法：不修 tokenizer，**直接替换**——`countRecentCycles` 改用 embedding 余弦（vatbrain 已有 `embedder.Embedder`），`tokenSimilarity` 同理（调用方已有 embedding 或现场 embed）。保留 `Tokenize` 仅作 fallback。
-- 验收：中文两条相似摘要 → link_on_write 产生 RELATES_TO 边。
+- 验收：中文两条相似摘要 → link_on_write 产生 RELATES_TO 边。✅（`TestLinkOnWrite_RelatesToEdges_Chinese` + gate 跨周期中文测试）
 
-### F2 — language 硬过滤与设计文档矛盾
+### F2 — language 硬过滤与设计文档矛盾 ✅ `2ae7e54`
 - 位置：`internal/core/retrieval_engine.go` L57-59（`ApplyHardConstraints` 硬排除 language 不同）。
 - 矛盾：`DESIGN_PRINCIPLES.md` §4.1 明确"跨技术栈的通用经验（如'并发问题通常出在锁粒度'）仍有迁移价值"。
 - 改法：language 移出硬约束 → 软权重（language 匹配 +10% 之类）；project_id 保留硬约束。
-- 验收：Go 项目检索命中 Python 项目的通用并发教训（`ContextFilterStats` 可见）。
+- 验收：Go 项目检索命中 Python 项目的通用并发教训（`ContextFilterStats` 可见）。✅（`TestRetrievalEngine_CrossLanguageHit`）
 
-### F3 — backtest 橡皮图章
+### F3 — backtest 橡皮图章 ✅ `8d2a5db`
 - 位置：`internal/core/consolidation_engine.go` L306-310 —— 无 LLM 时 cluster ≥ MinClusterSize 恒返回 1.0，设计文档 §8.1 称回测是"关键安全阀"。
 - 改法：无 LLM 时用 embedding 一致性做廉价回测（簇内 episodics 与候选 rule 的平均相似度，低于阈值不落库）；或退化为 0.5 常值（永不达标，宁缺毋滥）。
-- 验收：无 API key 时 `consolidation/trigger` 不再批量产生未经验证的 rule。
+- 验收：无 API key 时 `consolidation/trigger` 不再批量产生未经验证的 rule。✅（`TestConsolidationEngine_Run_NoSignal_NoRulesPersisted`）
 
 ---
 
@@ -119,7 +167,7 @@ internal/store/neo4jpg/neo4jpg_test.go
 
 | Phase | 内容 | 交付物 | 验收 |
 |---|---|---|---|
-| 1 | hermes Watcher 适配器 | `internal/watcher/adapters/hermes.go` + 装配 | `~/.hermes/memories/MEMORY.md` 写入 → 5 分钟内可被 vatbrain 检索到；重复轮询无重复条目 |
+| 1 | hermes Watcher 适配器 🔄（进行中，实现要点见 §0） | `internal/watcher/adapters/hermes.go` + 装配 | `~/.hermes/memories/MEMORY.md` 写入 → 5 分钟内可被 vatbrain 检索到；重复轮询无重复条目 |
 | 2 | provider 骨架 + 写路径 | `cmd/vatbrain-provider/`（stdio JSON-RPC）+ `$HERMES_HOME/plugins/vatbrain/` | hermes 启动日志 "Memory provider 'vatbrain' activated"；用户纠错 → 图中出现 `IsCorrection=true` episodic |
 | 3 | 读路径 | `queue_prefetch`/`prefetch` + Pitfall 注入 | LLM 请求副本出现 `<memory-context>` 栅栏；hot path p95 < 200ms |
 | 4 | 生命周期 | `on_session_end`→整合、`on_memory_write` 镜像、`on_session_switch` 重绑 | `/new` 后旧会话整合出 candidate rule/pitfall；内置写同步到图（source=user_explicit） |
@@ -178,9 +226,9 @@ config.yaml: memory.provider: vatbrain
 
 ## 7. 开工建议
 
-1. 本会话先执行 §2.4 的提交切分（A→D）。
-2. 修 F1-F3（§3），各配回归测试。
-3. 按 §4 Phase 1 → 4 推进，每 Phase 独立 commit。
+1. ~~本会话先执行 §2.4 的提交切分（A→D）。~~ ✅ 已完成（§0）
+2. ~~修 F1-F3（§3），各配回归测试。~~ ✅ 已完成（§0）
+3. 按 §4 Phase 1 → 4 推进，每 Phase 独立 commit。（当前：Phase 1 未动笔，要点见 §0）
 4. 每 Phase 验收不过就停，不要带病进入下一 Phase。
 
 *交接人：jayden（hermes-agent 会话，2026-08-08）。后续问题查 [`HERMES_INTEGRATION.md`](./HERMES_INTEGRATION.md)，再不行翻 hermes 仓库 `agent/memory_provider.py`。*

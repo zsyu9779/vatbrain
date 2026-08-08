@@ -108,3 +108,48 @@
 3. `docker-compose.yml`：Neo4j 5 + pgvector/pg16 + Redis 7 + MinIO
 4. `scripts/init_db.sh`：Neo4j 约束 + pgvector 表 + 健康检查
 5. `internal/db/` 连接层：neo4j、pgvector、redis、minio
+
+---
+
+## 2026-05-10/11 — Agent Memory Watcher 实施
+
+基于 `docs/v0.2.1/tech-specs/01-agent-memory-sync.md` 设计文档实现。
+
+**Step 1-4 已完成**, Step 5 验证中：
+
+1. **Watcher 基础设施** (`internal/watcher/`)
+   - `provider.go` — MemoryProvider 接口、RawMemory、ProviderRegistry、seenSet (LRU + JSON 持久化)
+   - `watcher.go` — MemoryWatcher 编排器（周期性轮询、去重、写入管道）
+   - `refiner.go` — LLM 提炼 + 启发式回退管线
+   - 17 个单元测试全部通过
+
+2. **4 个适配器** (`internal/watcher/adapters/`)
+   - `claude_code.go` — Claude Code (P0): 扫描 `~/.claude/projects/*/memory/*.md`，解析 YAML frontmatter
+   - `opencode.go` — OpenCode (P1): 骨架适配器（待调研具体格式）
+   - `cursor.go` — Cursor (P1): JSONL 增量解析，复用 import_cursor 逻辑
+   - `custom.go` — Custom (P1): YAML 驱动，用户可自定义任意 Agent 格式
+
+3. **MCP 工具** (`internal/mcp/`)
+   - `list_adapters` — 列出所有适配器及状态
+   - `sync_memories` — 手动触发全量同步
+   - `configure_adapter` — 运行时创建 Custom 适配器
+
+4. **App 集成** (`internal/app/app.go`)
+   - 条件创建：`VATBRAIN_WATCHER_ENABLED=true` 时启动
+   - 生命周期：Start (goroutine) / Stop (graceful) + SeenSet 持久化
+
+5. **配置** (`internal/config/config.go`)
+   - 新增 WatcherConfig，7 个环境变量
+
+### 测试结果
+
+- `go build ./...` ✅ 通过
+- `go vet ./...` ✅ 通过
+- `go test ./...` ✅ 395 通过, 4 失败（均来自 tests/ 的 Neo4j/Pgvector E2E，预先存在）
+- 新增 17 个 watcher 测试 + 现有 MCP 测试全部通过
+
+## 已知问题
+
+- 无阻断性问题
+- OpenCode 适配器为骨架（需调研具体存储格式）
+- Cursor 适配器使用轮询而非 fsnotify（当前设计简化，后续可加 Watch 方法）
