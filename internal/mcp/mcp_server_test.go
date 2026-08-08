@@ -58,6 +58,14 @@ func TestMCPServer_ToolRegistration(t *testing.T) {
 		"get_memory_weight",
 		"touch_memory",
 		"health_check",
+		// v0.2.2 Pitfall Workbench
+		"list_pitfalls",
+		"explain_pitfall",
+		"confirm_pitfall",
+		"suppress_pitfall",
+		"link_pitfall_entity",
+		// v0.3 Proactive Risk Injection
+		"prepare_edit_context",
 	}
 	for _, name := range expected {
 		assert.True(t, names[name], "expected tool %q to be registered", name)

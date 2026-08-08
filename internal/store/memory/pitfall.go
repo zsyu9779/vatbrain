@@ -121,6 +121,43 @@ func (s *Store) UpdatePitfallWeight(_ context.Context, id uuid.UUID, weight floa
 	return nil
 }
 
+// UpdatePitfallStatus transitions a pitfall through the Workbench state
+// machine (proposed → confirmed / suppressed → obsolete).
+func (s *Store) UpdatePitfallStatus(_ context.Context, id uuid.UUID, status models.PitfallStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pitfalls[id]
+	if !ok {
+		return fmt.Errorf("%w: %s", models.ErrPitfallNotFound, id)
+	}
+	p.Status = status.Normalize()
+	if status == models.PitfallObsolete {
+		now := time.Now().UTC()
+		p.ObsoletedAt = &now
+	}
+	p.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// AddPitfallCounters adjusts the interference counters used to compute a
+// pitfall's interference rate.
+func (s *Store) AddPitfallCounters(_ context.Context, id uuid.UUID, shownDelta, suppressedDelta int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pitfalls[id]
+	if !ok {
+		return fmt.Errorf("%w: %s", models.ErrPitfallNotFound, id)
+	}
+	if shownDelta > 0 {
+		p.TimesShown += shownDelta
+	}
+	if suppressedDelta > 0 {
+		p.TimesSuppressed += suppressedDelta
+	}
+	p.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
 // MarkPitfallObsolete marks a pitfall memory as obsolete.
 func (s *Store) MarkPitfallObsolete(_ context.Context, id uuid.UUID, at time.Time) error {
 	s.mu.Lock()

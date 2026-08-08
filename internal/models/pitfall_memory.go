@@ -30,6 +30,61 @@ type PitfallMemory struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 	ObsoletedAt          *time.Time `json:"obsoleted_at"`
 	SourceEpisodicIDs    []uuid.UUID `json:"source_episodic_ids"`
+	// Status is the Pitfall Workbench state machine (v0.2.2). Defaults to
+	// proposed when empty. confirmed/高置信 proposed 可主动注入；suppressed
+	// 是逃生阀（不再注入）；obsolete 对应实体已重构/修复，降权。
+	Status PitfallStatus `json:"status"`
+	// TimesShown counts how often active injection surfaced this pitfall;
+	// TimesSuppressed counts user-suppress decisions. InterferenceRate =
+	// TimesSuppressed / max(1, TimesShown) (EVOLUTION_PLAN v0.2.2).
+	TimesShown       int `json:"times_shown"`
+	TimesSuppressed  int `json:"times_suppressed"`
+}
+
+// PitfallStatus is the Pitfall Workbench lifecycle state.
+type PitfallStatus string
+
+const (
+	PitfallProposed   PitfallStatus = "proposed"   // extracted, not yet confirmed
+	PitfallConfirmed  PitfallStatus = "confirmed"  // user-approved or auto-promoted
+	PitfallSuppressed PitfallStatus = "suppressed" // user invalidated — no injection
+	PitfallObsolete   PitfallStatus = "obsolete"   // entity refactored/fixed — decayed
+)
+
+// Normalize maps an empty status to proposed; unknown statuses become proposed.
+func (p PitfallStatus) Normalize() PitfallStatus {
+	switch p {
+	case PitfallProposed, PitfallConfirmed, PitfallSuppressed, PitfallObsolete:
+		return p
+	default:
+		return PitfallProposed
+	}
+}
+
+// Injectable reports whether active injection may surface this pitfall
+// (confirmed or high-confidence proposed; never suppressed/obsolete).
+func (p PitfallMemory) Injectable() bool {
+	switch p.Status.Normalize() {
+	case PitfallConfirmed:
+		return true
+	case PitfallProposed:
+		// 高置信 proposed：多命中 + 高权重作为置信度代理。
+		return p.OccurrenceCount >= 2 && p.Weight >= 0.6
+	default:
+		return false
+	}
+}
+
+// InterferenceRate returns the share of injections the user suppressed.
+func (p PitfallMemory) InterferenceRate() float64 {
+	if p.TimesShown <= 0 {
+		return 0
+	}
+	r := float64(p.TimesSuppressed) / float64(p.TimesShown)
+	if r > 1 {
+		return 1
+	}
+	return r
 }
 
 // EntityType classifies the code entity a Pitfall anchors on.

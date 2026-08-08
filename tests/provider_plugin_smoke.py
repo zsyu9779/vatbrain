@@ -78,6 +78,18 @@ def main() -> int:
     p.on_session_end([])  # sleep integration (background, best-effort)
     p.on_session_switch("sess-smoke-2", reset=True)
     time.sleep(3)
+
+    # Phase 5: prepare_edit_context tool routed through the plugin.
+    tool_result = p.handle_tool_call("prepare_edit_context", {
+        "files": ["scripts/clawfeed-push-v3.py"],
+        "task_type": "refactor",
+        "user_goal": "修复 ClawFeed 推送身份",
+    })
+    risk = json.loads(tool_result)
+    assert "risk_score" in risk, f"missing risk_score: {tool_result[:120]}"
+    assert "reason_codes" in risk, f"missing reason_codes: {tool_result[:120]}"
+    print("[vatbrain] prepare_edit_context OK: risk_score present")
+
     p.shutdown()
 
     db = os.path.join(home, "vatbrain", "vatbrain.db")

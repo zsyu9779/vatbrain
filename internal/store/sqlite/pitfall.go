@@ -48,8 +48,8 @@ func (s *Store) WritePitfall(_ context.Context, p *models.PitfallMemory) error {
 			 was_user_corrected, occurrence_count, last_occurred_at,
 			 source_type, trust_level, weight,
 			 created_at, updated_at, obsoleted_at,
-			 source_episodic_ids)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 source_episodic_ids, status, times_shown, times_suppressed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		p.ID.String(),
 		p.EntityID,
@@ -70,7 +70,35 @@ func (s *Store) WritePitfall(_ context.Context, p *models.PitfallMemory) error {
 		p.UpdatedAt.UTC().Format(time.RFC3339),
 		obsoleted,
 		string(srcIDs),
+		string(p.Status.Normalize()),
+		p.TimesShown,
+		p.TimesSuppressed,
 	)
+	return err
+}
+
+// UpdatePitfallStatus transitions a pitfall through the Workbench state
+// machine (proposed → confirmed / suppressed → obsolete).
+func (s *Store) UpdatePitfallStatus(_ context.Context, id uuid.UUID, status models.PitfallStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`UPDATE pitfall_memories SET status = ?, updated_at = ? WHERE id = ?`,
+		string(status.Normalize()), time.Now().UTC().Format(time.RFC3339), id.String())
+	return err
+}
+
+// AddPitfallCounters adjusts the interference counters (times_shown /
+// times_suppressed) used to compute a pitfall's interference rate.
+func (s *Store) AddPitfallCounters(_ context.Context, id uuid.UUID, shownDelta, suppressedDelta int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`
+		UPDATE pitfall_memories
+		SET times_shown = MAX(0, times_shown + ?),
+		    times_suppressed = MAX(0, times_suppressed + ?),
+		    updated_at = ?
+		WHERE id = ?`,
+		shownDelta, suppressedDelta, time.Now().UTC().Format(time.RFC3339), id.String())
 	return err
 }
 
@@ -85,7 +113,7 @@ func (s *Store) GetPitfall(_ context.Context, id uuid.UUID) (*models.PitfallMemo
 		       was_user_corrected, occurrence_count, last_occurred_at,
 		       source_type, trust_level, weight,
 		       created_at, updated_at, obsoleted_at,
-		       source_episodic_ids
+		       source_episodic_ids, status, times_shown, times_suppressed
 		FROM pitfall_memories WHERE id = ?
 	`, id.String())
 
@@ -129,7 +157,7 @@ func (s *Store) SearchPitfall(_ context.Context, req store.PitfallSearchRequest)
 		       was_user_corrected, occurrence_count, last_occurred_at,
 		       source_type, trust_level, weight,
 		       created_at, updated_at, obsoleted_at,
-		       source_episodic_ids
+		       source_episodic_ids, status, times_shown, times_suppressed
 		FROM pitfall_memories
 		%s
 		ORDER BY weight DESC
@@ -184,7 +212,7 @@ func (s *Store) SearchPitfallByEntity(_ context.Context, entityID, projectID str
 		       was_user_corrected, occurrence_count, last_occurred_at,
 		       source_type, trust_level, weight,
 		       created_at, updated_at, obsoleted_at,
-		       source_episodic_ids
+		       source_episodic_ids, status, times_shown, times_suppressed
 		FROM pitfall_memories
 		WHERE entity_id = ? AND project_id = ? AND obsoleted_at IS NULL
 		ORDER BY weight DESC
@@ -255,6 +283,7 @@ func scanPitfallRow(scanner interface{ Scan(dest ...any) error }) (*models.Pitfa
 	var wasUserCorrected int
 	var sigEmb []byte
 	var srcIDsStr string
+	var statusStr string
 
 	err := scanner.Scan(
 		&idStr, &p.EntityID, &entityTypeStr, &p.ProjectID, &p.Language, &p.Signature,
@@ -262,12 +291,13 @@ func scanPitfallRow(scanner interface{ Scan(dest ...any) error }) (*models.Pitfa
 		&wasUserCorrected, &p.OccurrenceCount, &laStr,
 		&sourceTypeStr, &p.TrustLevel, &p.Weight,
 		&createdAtStr, &updatedAtStr, &obsoletedStr,
-		&srcIDsStr,
+		&srcIDsStr, &statusStr, &p.TimesShown, &p.TimesSuppressed,
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	p.Status = models.PitfallStatus(statusStr).Normalize()
 	p.ID, _ = uuid.Parse(idStr)
 	p.EntityType = models.EntityType(entityTypeStr)
 	p.RootCauseCategory = models.RootCause(rootCauseStr)

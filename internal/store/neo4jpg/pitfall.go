@@ -43,6 +43,9 @@ func (s *Store) WritePitfall(ctx context.Context, p *models.PitfallMemory) error
 		"createdAt":          p.CreatedAt,
 		"updatedAt":          p.UpdatedAt,
 		"sourceEpisodicIDs":  srcIDs,
+		"status":             string(p.Status.Normalize()),
+		"timesShown":         int64(p.TimesShown),
+		"timesSuppressed":    int64(p.TimesSuppressed),
 	}
 	if p.LastOccurredAt != nil {
 		params["lastOccurredAt"] = *p.LastOccurredAt
@@ -76,7 +79,10 @@ func (s *Store) WritePitfall(ctx context.Context, p *models.PitfallMemory) error
 				created_at: $createdAt,
 				updated_at: $updatedAt,
 				obsoleted_at: $obsoletedAt,
-				source_episodic_ids: $sourceEpisodicIDs
+				source_episodic_ids: $sourceEpisodicIDs,
+				status: $status,
+				times_shown: $timesShown,
+				times_suppressed: $timesSuppressed
 			})
 		`, params)
 		return nil, runErr
@@ -255,6 +261,42 @@ func (s *Store) UpdatePitfallWeight(ctx context.Context, id uuid.UUID, weight fl
 	return nil
 }
 
+// UpdatePitfallStatus transitions a pitfall through the Workbench state
+// machine (proposed → confirmed / suppressed → obsolete).
+func (s *Store) UpdatePitfallStatus(ctx context.Context, id uuid.UUID, status models.PitfallStatus) error {
+	_, err := s.neo4j.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
+		_, runErr := tx.Run(ctx,
+			`MATCH (p:PitfallMemory {id: $id})
+			 SET p.status = $status, p.updated_at = $now`,
+			map[string]any{"id": id.String(), "status": string(status.Normalize()),
+				"now": time.Now().UTC()})
+		return nil, runErr
+	})
+	if err != nil {
+		return fmt.Errorf("neo4jpg: update pitfall status: %w", err)
+	}
+	return nil
+}
+
+// AddPitfallCounters adjusts the interference counters used to compute a
+// pitfall's interference rate.
+func (s *Store) AddPitfallCounters(ctx context.Context, id uuid.UUID, shownDelta, suppressedDelta int) error {
+	_, err := s.neo4j.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
+		_, runErr := tx.Run(ctx,
+			`MATCH (p:PitfallMemory {id: $id})
+			 SET p.times_shown = p.times_shown + $shown,
+			     p.times_suppressed = p.times_suppressed + $suppressed,
+			     p.updated_at = $now`,
+			map[string]any{"id": id.String(), "shown": shownDelta, "suppressed": suppressedDelta,
+				"now": time.Now().UTC()})
+		return nil, runErr
+	})
+	if err != nil {
+		return fmt.Errorf("neo4jpg: add pitfall counters: %w", err)
+	}
+	return nil
+}
+
 // MarkPitfallObsolete marks a pitfall as obsolete.
 func (s *Store) MarkPitfallObsolete(ctx context.Context, id uuid.UUID, at time.Time) error {
 	_, err := s.neo4j.ExecuteWrite(ctx, func(tx neodriver.ManagedTransaction) (any, error) {
@@ -310,6 +352,9 @@ func scanPitfall(r *neodriver.Record, prefix string) (*models.PitfallMemory, err
 	weight, _ := node.Props["weight"].(float64)
 	createdAt, _ := node.Props["created_at"].(time.Time)
 	updatedAt, _ := node.Props["updated_at"].(time.Time)
+	status, _ := node.Props["status"].(string)
+	timesShown, _ := node.Props["times_shown"].(int64)
+	timesSuppressed, _ := node.Props["times_suppressed"].(int64)
 
 	p := &models.PitfallMemory{
 		ID:                   pid,
@@ -328,6 +373,9 @@ func scanPitfall(r *neodriver.Record, prefix string) (*models.PitfallMemory, err
 		Weight:               weight,
 		CreatedAt:            createdAt,
 		UpdatedAt:            updatedAt,
+		Status:               models.PitfallStatus(status).Normalize(),
+		TimesShown:           int(timesShown),
+		TimesSuppressed:      int(timesSuppressed),
 	}
 
 	if v, ok := node.Props["last_occurred_at"]; ok && v != nil {

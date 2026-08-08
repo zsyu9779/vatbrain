@@ -94,7 +94,10 @@ CREATE TABLE IF NOT EXISTS pitfall_memories (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     obsoleted_at TEXT,
-    source_episodic_ids TEXT DEFAULT ''
+    source_episodic_ids TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'proposed',
+    times_shown INTEGER NOT NULL DEFAULT 0,
+    times_suppressed INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_pitfall_entity ON pitfall_memories(entity_id, project_id);
 CREATE INDEX IF NOT EXISTS idx_pitfall_project ON pitfall_memories(project_id, language);
@@ -122,6 +125,18 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE episodic_memories
 		ADD COLUMN is_correction INTEGER DEFAULT 0`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("sqlite migrate is_correction: %w", err)
+	}
+
+	// v0.2.2 Pitfall Workbench: status + interference counters.
+	for _, col := range []string{
+		"status TEXT NOT NULL DEFAULT 'proposed'",
+		"times_shown INTEGER NOT NULL DEFAULT 0",
+		"times_suppressed INTEGER NOT NULL DEFAULT 0",
+	} {
+		if _, err := db.Exec("ALTER TABLE pitfall_memories ADD COLUMN " + col); err != nil &&
+			!isDuplicateColumnErr(err) {
+			return fmt.Errorf("sqlite migrate pitfall %s: %w", col, err)
+		}
 	}
 
 	return nil

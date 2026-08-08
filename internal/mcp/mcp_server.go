@@ -33,6 +33,14 @@ func RegisteredTools(a *app.App) []server.ServerTool {
 		getMemoryWeightTool(a),
 		touchMemoryTool(a),
 		healthCheckTool(a),
+		// v0.2.2 Pitfall Workbench
+		listPitfallsTool(a),
+		explainPitfallTool(a),
+		confirmPitfallTool(a),
+		suppressPitfallTool(a),
+		linkPitfallEntityTool(a),
+		// v0.3 Proactive Risk Injection
+		prepareEditContextTool(a),
 	}
 
 	// v0.2.1: Agent Memory Watcher tools are only available when the

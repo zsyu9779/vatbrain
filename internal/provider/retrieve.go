@@ -101,9 +101,9 @@ func RetrieveEpisodic(ctx context.Context, deps core.WriteDeps, projectID, query
 // RetrievePitfalls finds pitfalls relevant to query within a project. It
 // pulls a weight-ranked candidate pool from the store and scores them by
 // text overlap; entity references in the query get a boost so
-// entity-anchored pitfalls surface. Only non-obsoleted, high-weight
-// pitfalls are considered (the confirmed/proposed state gate lands with the
-// Phase 5 Pitfall Workbench state machine).
+// entity-anchored pitfalls surface. Only injectable pitfalls are returned
+// (confirmed or high-confidence proposed — the v0.2.2 Workbench state
+// machine); suppressed/obsolete pitfalls are the injection escape valve.
 func RetrievePitfalls(ctx context.Context, deps core.WriteDeps, projectID, query string, limit int) ([]models.PitfallMemory, error) {
 	if limit <= 0 {
 		limit = pitfallResultLimit
@@ -127,6 +127,9 @@ func RetrievePitfalls(ctx context.Context, deps core.WriteDeps, projectID, query
 	}
 	var pool []scored
 	for _, p := range candidates {
+		if !p.Injectable() {
+			continue
+		}
 		s := bigramOverlapFromSets(queryBigrams, charBigrams(p.Signature))
 		for _, e := range entityIDs {
 			if strings.Contains(strings.ToLower(p.EntityID), strings.ToLower(strings.TrimPrefix(e, "@"))) {

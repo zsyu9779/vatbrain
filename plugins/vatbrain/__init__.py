@@ -197,8 +197,40 @@ class VatBrainMemoryProvider(MemoryProvider):
             logger.warning("vatbrain: %s failed (best-effort): %s", method, exc)
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        """No tools in Phase 2; prepare_edit_context lands in Phase 5."""
-        return []
+        """Expose the v0.3 proactive risk-injection tool to the model."""
+        return [{
+            "name": "prepare_edit_context",
+            "description": "Before editing files, get relevant memories + top Pitfall risks + a risk score for the files about to be modified.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "File paths being edited",
+                    },
+                    "task_type": {
+                        "type": "string",
+                        "enum": ["debug", "feature", "refactor", "review"],
+                    },
+                    "language": {"type": "string"},
+                    "user_goal": {"type": "string", "description": "Optional user goal"},
+                },
+                "required": ["files"],
+            },
+        }]
+
+    def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs: Any) -> str:
+        """Route a tool call to the daemon and return its JSON result."""
+        if tool_name != "prepare_edit_context":
+            raise NotImplementedError(f"vatbrain does not handle tool {tool_name}")
+        params = dict(args)
+        params["session_id"] = self._session_id
+        try:
+            result = self._rpc("prepare_edit_context", params, timeout=_IO_TIMEOUT_S)
+            return json.dumps(result)
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
 
     def system_prompt_block(self) -> str:
         """Empty — vatbrain recall flows through prefetch, not the stable block."""

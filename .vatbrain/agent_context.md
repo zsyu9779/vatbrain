@@ -4,13 +4,37 @@
 
 ## 项目状态
 
-- **阶段**: Hermes 集成 Phase 4 — 生命周期钩子 ✅ 完成（未提交）；Phase 2/3 已提交推送
+- **阶段**: Hermes 集成 Phase 5 — Pitfall Workbench + v0.3 风险注入 ✅ 完成（未提交）；Phase 2/3/4 已提交推送
 - **语言**: Go (go 1.25.5) + Python（hermes 插件）
 - **分支**: `feature/agent-memory-watcher`（本地领先 origin 1 commit，未推送）
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点
 - **hermes 源码**: 本机 `~/.hermes/hermes-agent`（HEAD 52920747e，工作树干净）
 - **hermes 插件**: 已安装 `~/.hermes/plugins/vatbrain/` + daemon 二进制 `~/.hermes/vatbrain/bin/vatbrain-provider`
 - **战略决策（2026-08-08）**: Neo4j+pgvector 重型存储将弃用，后续只投入 SQLite 路径
+
+## 最近工作（2026-08-08）— Phase 5 Pitfall Workbench + v0.3 风险注入
+
+### 本次完成
+
+1. **v0.2.2 Pitfall Workbench 状态机**：
+   - `models.PitfallStatus`（proposed/confirmed/suppressed/obsolete）+ `Injectable()`（confirmed 或高置信 proposed=多命中+高权重；suppressed/obsolete 逃生阀）+ `InterferenceRate()`（TimesSuppressed/TimesShown）
+   - 持久化：sqlite `pitfall_memories` 加 status/times_shown/times_suppressed 列 + 迁移；memory/neo4j 同步；store 接口 `UpdatePitfallStatus` + `AddPitfallCounters`
+2. **5 个 MCP 工具**（`pitfall_workbench.go`）：list_pitfalls（含状态/干扰率）、explain_pitfall（可溯源 source_episodic_ids）、confirm_pitfall、suppress_pitfall（+计数器）、link_pitfall_entity
+3. **v0.3 风险注入**：
+   - `core/risk_engine.go` `ComputeRisk`：Pitfall 密度（occurrence×trust×时间衰减 exp(-days/30)）→ risk_score∈[0,1] + reason codes（recent_error/high_risk_pitfall/user_corrected/memory_recall/editing_files）；最多注入 3 条
+   - MCP `prepare_edit_context` 工具（files/task_type/language/user_goal → memories + pitfalls + risk + reasons，记录 TimesShown）
+   - daemon `prepare_edit_context` 方法 + 插件 `get_tool_schemas`/`handle_tool_call`（模型可直接调用）
+   - `provider.RetrievePitfalls` 升级为仅 Injectable（Phase 3 prefetch 风险块接入状态机）
+4. **验收**：
+   - 单测：risk engine 中文用例、Workbench 工具全流程（confirm/suppress 状态迁移+计数器、link 重锚、explain 溯源）、daemon prepare_edit_context（risk>0 + recent_error + TimesShown++）
+   - 冒烟：handle_tool_call("prepare_edit_context") → risk_score 返回 ✅
+   - `go test ./internal/...` 20/20 全绿（新增 core/mcp/provider 用例）
+   - 真实安装已同步（插件 + 二进制）
+
+### 当前状态
+
+- 本地领先 origin 1 commit（Phase 5）未提交未推送
+- 待用户授权激活 `~/.hermes/config.yaml` memory.provider
 
 ## 最近工作（2026-08-08）— Phase 4 生命周期钩子
 

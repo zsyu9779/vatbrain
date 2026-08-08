@@ -24,6 +24,7 @@ const (
 	MethodSyncTurn        = "sync_turn"
 	MethodPrefetch        = "prefetch"
 	MethodQueuePrefetch   = "queue_prefetch"
+	MethodPrepareEditContext = "prepare_edit_context"
 	MethodPing            = "ping"
 	MethodShutdown        = "shutdown"
 )
@@ -177,6 +178,8 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
 		return s.handleOnMemoryWrite(ctx, req)
 	case MethodOnSessionSwitch:
 		return s.handleOnSessionSwitch(req)
+	case MethodPrepareEditContext:
+		return s.handlePrepareEditContext(ctx, req)
 	case MethodPing:
 		return newResponse(req.ID, map[string]bool{"pong": true})
 	case MethodShutdown:
