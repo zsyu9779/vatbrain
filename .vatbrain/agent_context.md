@@ -29,6 +29,10 @@
 - **验证**：recall 链路直连测试通过（语义 embedding 下 prefetch 返回训练记忆 2476 字符）；hermes 会话不落 jsonl（存 state.db）→ collect_session 返回 0 统计（不影响 verifier 出分）。
 - **用户决策（2026-08-10）**：hermes agent 模型**保持 MiniMax-M3**（便宜），不换 deepseek。
 - **记忆质量观察**：任务记忆=完整 prompt（价值低）；**feedback 记忆=含 expected answer 的丰富知识（主要跨任务价值）**。
+- **⚠️ 工具禁用关键修复**：`-t ""` 在 argparse 里变 None → 回落全部工具（agent 会 tool-loop，web_fetch/terminal）；改用无效工具集名 `-t vatbrain_none` → 真禁用。任务从 5+ 分钟降到 ~10-30 秒。**全量跑必须用此配置**。
+- **⚠️ MiniMax 偶发挂死**：约 1/3 请求挂在 MiniMax（stale connection，重试新进程可恢复）。用看门狗自动杀 >90s（10 题样本）/ >240s（全量）的 hermes 进程。`ps -o etimes=` 在 macOS 无效，用 `etime=` + 解析（`/tmp/elapsed_fn.sh`）。
+- **10 题样本结果（工具禁用）**：**baseline 10% vs vatbrain 20%**（omni_2292 从错到对）。工具启用版 baseline 是 40%（terminal 计算器有实质帮助）。报告：`docs/v0.3/09-agent-benchmark-results.md`。
+- **全量跑进行中**：vatbrain（478 train + 100 test）+ baseline（100 test）后台跑，链式启动器自动顺序执行（10 题样本完成后触发）。预计 ~8-12h。
 
 ## 最近工作（2026-08-10）— OmniMemEval 时序修复：chat_time 日期前缀
 
