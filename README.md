@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo/vatbrain-logo.png" alt="VatBrain logo" width="720">
+</p>
+
 # VatBrain — Brain in a Vat
 
 > AI Agent 记忆增强系统 / AI Agent Memory Augmentation System

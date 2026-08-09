@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-- **当前任务**: VatBrain Logo 三方向设计（设计说明已确认，候选稿待生成）
+- **当前任务**: VatBrain Logo 已选定赛博科幻方向并接入 README
 - **阶段**: Hermes 集成 **Phase 1-6 全部完成并已合并到 main** ✅
 - **语言**: Go (go 1.25.5) + Python（hermes 插件）
 - **分支**: 当前在 `main`，已快进同步至 `origin/main` 的 `916fb9b`
@@ -25,12 +25,13 @@
 5. 新增设计说明：`docs/superpowers/specs/2026-08-09-vatbrain-logo-design.md`。
 6. 用户已审阅并通过设计说明；新增实施计划：
    `docs/superpowers/plans/2026-08-09-vatbrain-logo.md`。
+7. 生成极简科技、神经生物、赛博科幻三版候选稿；用户选定第 3 版。
+8. 将选定稿保存为 `assets/logo/vatbrain-logo.png`，并接入 README 顶部。
 
 ### 下一步
 
-1. 选择 inline 或 subagent-driven 的计划执行方式。
-2. 生成三张 PNG 候选稿并保存到 `assets/logo/`。
-3. 检查文字、构图和风格差异，更新本上下文并提交资产。
+1. 如需进一步品牌化，可补充透明背景、SVG 精修版和 favicon。
+2. 当前版本使用浅色背景，后续可按 GitHub 深色主题表现决定是否增加暗色变体。
 
 ## 最近工作（2026-08-08）— Phase 6 评测 harness（20 场景）
 
