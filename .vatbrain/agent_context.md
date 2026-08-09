@@ -23,11 +23,13 @@
 3. 确认主要场景为 GitHub README / 项目主页，形式为“图形标 + `VatBrain` 字标”。
 4. 定稿三条候选方向：极简科技、神经生物、赛博科幻。
 5. 新增设计说明：`docs/superpowers/specs/2026-08-09-vatbrain-logo-design.md`。
+6. 用户已审阅并通过设计说明；新增实施计划：
+   `docs/superpowers/plans/2026-08-09-vatbrain-logo.md`。
 
 ### 下一步
 
-1. 用户审阅设计说明。
-2. 审阅通过后生成三张 PNG 候选稿并保存到 `assets/logo/`。
+1. 选择 inline 或 subagent-driven 的计划执行方式。
+2. 生成三张 PNG 候选稿并保存到 `assets/logo/`。
 3. 检查文字、构图和风格差异，更新本上下文并提交资产。
 
 ## 最近工作（2026-08-08）— Phase 6 评测 harness（20 场景）
