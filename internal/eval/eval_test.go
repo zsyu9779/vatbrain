@@ -106,25 +106,42 @@ func TestEvalHarness_AllScenarios(t *testing.T) {
 			// 确定性模拟
 			res := eval.Simulate(s, rng)
 			results = append(results, res)
-			t.Logf("[%s] %s: errors %d→%d reduction=%.1f%% interference=%.1f%%",
+			t.Logf("[%s] %s: errors %d→%d→%d reduction=%.1f%% useful=%.0f%% false=%.0f%%",
 				s.ID, s.Title,
-				res.ErrorsWithoutInjection, res.ErrorsWithInjection,
-				res.RepeatedErrorReductionRate*100, res.InterferenceRate*100)
+				res.BaselineErrors, res.GenericErrors, res.VatbrainErrors,
+				res.RepeatedErrorReductionRate*100,
+				res.UsefulInjectionRate*100, res.FalseInjectionRate*100)
 		})
 	}
 
-	// 汇总：EVOLUTION_PLAN 验收阈值
+	// 汇总：EVOLUTION_PLAN 验收阈值（三组对比 + 注入质量）
 	summary := eval.Aggregate(results)
-	t.Logf("SUMMARY: %d scenarios | reduction=%.1f%% interference=%.1f%%",
-		summary.Scenarios, summary.RepeatedErrorReductionRate*100, summary.InterferenceRate*100)
+	t.Logf("SUMMARY: %d scenarios | errors %d→%d→%d | reduction=%.1f%% generic=%.1f%% | useful=%.1f%% false=%.1f%% | time=%.2fx tokens=%.3fx",
+		summary.Scenarios, summary.BaselineErrors, summary.GenericErrors, summary.VatbrainErrors,
+		summary.RepeatedErrorReductionRate*100, summary.GenericReductionRate*100,
+		summary.UsefulInjectionRate*100, summary.FalseInjectionRate*100,
+		summary.TaskTimeRatio, summary.TokenOverheadRatio)
 
 	assert.Equal(t, 20, summary.Scenarios)
-	assert.True(t, summary.RepeatedErrorReductionRate > 0,
-		"重复错误减少率必须可测（>0），got %.1f%%", summary.RepeatedErrorReductionRate*100)
+	// 三组阶梯：VatBrain 错误最少，generic 居中
+	assert.True(t, summary.VatbrainErrors < summary.GenericErrors,
+		"VatBrain 应优于 generic memory（%d < %d）", summary.VatbrainErrors, summary.GenericErrors)
+	assert.True(t, summary.GenericErrors < summary.BaselineErrors,
+		"generic memory 应优于 baseline（%d < %d）", summary.GenericErrors, summary.BaselineErrors)
 	assert.True(t, summary.RepeatedErrorReductionRate >= 0.5,
 		"重复错误减少率应显著，got %.1f%%", summary.RepeatedErrorReductionRate*100)
-	assert.Less(t, summary.InterferenceRate, 0.30,
-		"主动注入干扰率必须 <30%，got %.1f%%", summary.InterferenceRate*100)
+	assert.True(t, summary.GenericReductionRate < summary.RepeatedErrorReductionRate,
+		"generic 减幅应小于 VatBrain")
+	// EVOLUTION_PLAN 质量指标：useful injection > 60%，false injection < 30%
+	assert.True(t, summary.UsefulInjectionRate > 0.6,
+		"useful injection rate 应 >60%，got %.1f%%", summary.UsefulInjectionRate*100)
+	assert.Less(t, summary.FalseInjectionRate, 0.30,
+		"false injection rate 应 <30%，got %.1f%%", summary.FalseInjectionRate*100)
+	// 成本：注入避免重试，任务时间不增反降；token 开销有界
+	assert.LessOrEqual(t, summary.TaskTimeRatio, 1.05,
+		"注入不应显著拖慢任务，got %.2fx", summary.TaskTimeRatio)
+	assert.Less(t, summary.TokenOverheadRatio, 1.05,
+		"token 开销应 <5%，got %.3fx", summary.TokenOverheadRatio)
 }
 
 func TestEvalHarness_ScenariosAreReasonable(t *testing.T) {
