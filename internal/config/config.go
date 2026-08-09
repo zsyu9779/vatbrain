@@ -39,6 +39,7 @@ type Config struct {
 	SignificanceGate  SignificanceGateConfig
 	PatternSeparation PatternSeparationConfig
 	Retrieval         RetrievalConfig
+	Embedder          EmbedderConfig
 	Consolidation     ConsolidationConfig
 	PitfallDecay      PitfallDecayConfig
 	Scheduler         SchedulerConfig
@@ -111,6 +112,17 @@ type LLMConfig struct {
 	APIKey  string
 	BaseURL string
 	Model   string // Messages API model, default "claude-sonnet-4-6-20250501"
+}
+
+// EmbedderConfig holds the dual-channel embedder configuration
+// (v0.1 tech-spec 01-embedder-architecture.md).
+type EmbedderConfig struct {
+	// SemanticProvider: "openai" | "voyage" | "local" | "none" (default none).
+	SemanticProvider string
+	SemanticAPIKey   string
+	SemanticBaseURL  string
+	SemanticModel    string
+	KeywordDim       int
 }
 
 // LoadFromEnv reads configuration from environment variables with defaults.
@@ -199,6 +211,14 @@ func LoadFromEnv() Config {
 			APIKey:  envStr("ANTHROPIC_API_KEY", ""),
 			BaseURL: envStr("ANTHROPIC_BASE_URL", ""),
 			Model:   envStr("ANTHROPIC_MODEL", "claude-sonnet-4-6-20250501"),
+		},
+
+		Embedder: EmbedderConfig{
+			SemanticProvider: envStr("VATBRAIN_EMBEDDER_SEMANTIC_PROVIDER", "none"),
+			SemanticAPIKey:   envStr("VATBRAIN_EMBEDDER_SEMANTIC_API_KEY", ""),
+			SemanticBaseURL:  envStr("VATBRAIN_EMBEDDER_SEMANTIC_BASE_URL", ""),
+			SemanticModel:    envStr("VATBRAIN_EMBEDDER_SEMANTIC_MODEL", ""),
+			KeywordDim:       envInt("VATBRAIN_EMBEDDER_KEYWORD_DIM", 0),
 		},
 
 		Watcher: WatcherConfig{

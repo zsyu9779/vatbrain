@@ -129,6 +129,8 @@ func TestLoadFromEnv_CustomValues(t *testing.T) {
 	t.Setenv("GATE_MIN_CROSS_CYCLE", "5")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
 	t.Setenv("VATBRAIN_WATCHER_HERMES_HOME", "/tmp/hermes-profile")
+	t.Setenv("VATBRAIN_EMBEDDER_SEMANTIC_PROVIDER", "openai")
+	t.Setenv("VATBRAIN_EMBEDDER_SEMANTIC_MODEL", "text-embedding-3-small")
 
 	cfg := LoadFromEnv()
 	assert.Equal(t, 3000, cfg.Port)
@@ -137,4 +139,11 @@ func TestLoadFromEnv_CustomValues(t *testing.T) {
 	assert.Equal(t, 5, cfg.SignificanceGate.MinCrossCycleCount)
 	assert.Equal(t, "sk-test", cfg.LLM.APIKey)
 	assert.Equal(t, "/tmp/hermes-profile", cfg.Watcher.HermesHomeDir)
+	assert.Equal(t, "openai", cfg.Embedder.SemanticProvider)
+	assert.Equal(t, "text-embedding-3-small", cfg.Embedder.SemanticModel)
+}
+
+func TestLoadFromEnv_EmbedderDefaults(t *testing.T) {
+	cfg := LoadFromEnv()
+	assert.Equal(t, "none", cfg.Embedder.SemanticProvider, "默认无语义 provider（仅关键词通道）")
 }

@@ -139,12 +139,23 @@ func New(ctx context.Context) (*App, error) {
 		consolidation.AccuracyThreshold = cfg.Consolidation.AccuracyThreshold
 	}
 
-	// Embedder: use Claude if API key is set, otherwise fall back to stub.
+	// Embedder: dual-channel config wins when a semantic provider is chosen;
+	// otherwise keep the legacy Claude-if-key / keyword-channel default. The
+	// keyword channel is CJK-safe and non-zero, so retrieval/clustering work
+	// without an API key (v0.1 dual-channel tech-spec).
 	var emb embedder.Embedder
-	if cfg.LLM.APIKey != "" {
+	if cfg.Embedder.SemanticProvider != "" && cfg.Embedder.SemanticProvider != "none" {
+		emb = embedder.NewEmbedderFromConfig(embedder.EmbedderConfig{
+			SemanticProvider: embedder.SemanticProviderName(cfg.Embedder.SemanticProvider),
+			SemanticAPIKey:   cfg.Embedder.SemanticAPIKey,
+			SemanticBaseURL:  cfg.Embedder.SemanticBaseURL,
+			SemanticModel:    cfg.Embedder.SemanticModel,
+			KeywordDim:       cfg.Embedder.KeywordDim,
+		})
+	} else if cfg.LLM.APIKey != "" {
 		emb = embedder.NewClaudeEmbedder(cfg.LLM.APIKey, cfg.LLM.BaseURL, "")
 	} else {
-		emb = embedder.NewStubEmbedder()
+		emb = embedder.NewKeywordEmbedder(cfg.Embedder.KeywordDim)
 	}
 	// F1: embedding-based cross-cycle similarity (CJK-safe). The stub yields
 	// zero vectors, so the gate falls back to keyword overlap there.
