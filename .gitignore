@@ -31,3 +31,6 @@ docs/superpowers/
 # OmniMemEval benchmark
 /bin/
 /vatbrain-bench
+
+# credential files
+.env.*

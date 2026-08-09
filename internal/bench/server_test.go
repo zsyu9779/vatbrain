@@ -114,6 +114,69 @@ func TestBench_AddSearchRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBench_TemporalPrefixInMemory(t *testing.T) {
+	ts := newTestServer(t, GateModeOff)
+
+	// A message stamped with chat_time gets a "[YYYY-MM-DD] " date prefix on
+	// its stored summary, so retrieved context carries the event date.
+	code, out := postJSON(t, ts.URL+"/v1/add", `{
+		"user_id": "u1",
+		"messages": [
+			{"role": "user", "content": "Alice got a shell necklace on a trip to Hawaii", "chat_time": "2029-05-04T10:00:00Z"}
+		]
+	}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, float64(1), out["persisted"])
+
+	code, out = postJSON(t, ts.URL+"/v1/search", `{"user_id":"u1","query":"Hawaii necklace trip","top_k":5}`)
+	require.Equal(t, http.StatusOK, code)
+	results, ok := out["results"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, results)
+	withDate := results[0].(map[string]any)["content"].(string)
+	assert.Contains(t, withDate, "[2029-05-04]", "retrieved memory should carry the message date")
+	assert.Contains(t, withDate, "Alice got a shell necklace on a trip to Hawaii")
+
+	// A message without chat_time must keep its summary unchanged: no "["
+	// prefix, content exactly as stored.
+	code, out = postJSON(t, ts.URL+"/v1/add", `{
+		"user_id": "u2",
+		"messages": [
+			{"role": "user", "content": "Bob is learning to bake sourdough bread at home"}
+		]
+	}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, float64(1), out["persisted"])
+
+	code, out = postJSON(t, ts.URL+"/v1/search", `{"user_id":"u2","query":"sourdough bread","top_k":5}`)
+	require.Equal(t, http.StatusOK, code)
+	results, ok = out["results"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, results)
+	noDate := results[0].(map[string]any)["content"].(string)
+	assert.Equal(t, "Bob is learning to bake sourdough bread at home", noDate)
+	assert.NotContains(t, noDate, "[", "message without chat_time must not get a date prefix")
+
+	// The date prefix must apply in gate "on" mode too: a correction that
+	// persists still carries the event date on its summary.
+	tsOn := newTestServer(t, GateModeOn)
+	code, out = postJSON(t, tsOn.URL+"/v1/add", `{
+		"user_id": "u1",
+		"messages": [
+			{"role": "user", "content": "actually it should be blue not red", "chat_time": "2029-05-04T10:00:00Z"}
+		]
+	}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, float64(1), out["persisted"])
+
+	code, out = postJSON(t, tsOn.URL+"/v1/search", `{"user_id":"u1","query":"blue red","top_k":5}`)
+	require.Equal(t, http.StatusOK, code)
+	results, ok = out["results"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, results)
+	assert.Contains(t, results[0].(map[string]any)["content"].(string), "[2029-05-04]")
+}
+
 func TestBench_Add_EmptyOrMissingContentSkipped(t *testing.T) {
 	ts := newTestServer(t, GateModeOff)
 

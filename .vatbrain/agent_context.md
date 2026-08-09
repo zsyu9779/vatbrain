@@ -12,6 +12,17 @@
 - **hermes**: `~/.hermes/hermes-agent`（HEAD 52920747e）+ 插件 `~/.hermes/plugins/vatbrain/` 已激活（config.yaml memory.provider: vatbrain）
 - **战略决策（2026-08-08）**: Neo4j+pgvector 重型存储弃用，后续只投入 SQLite 路径
 
+## 最近工作（2026-08-10）— OmniMemEval 时序修复：chat_time 日期前缀
+
+- **问题**：LoCoMo Temporal 15%、LongMemEval Temporal 52.6% 弱 → 根因是 bench server 丢弃了 harness 转发的 `chat_time`，检索出的记忆无日期，answer 模型无法做事件排序。
+- **改动**（`internal/bench/server.go`，仅 bench server，未动 core/provider）：
+  - `handleAdd` 把 `msg.ChatTime` 传入 `eventFor(content, chatTime)`（server.go handleAdd 循环内）
+  - `eventFor` 签名改为 `(content, chatTime string)`；新增辅助函数 `datePrefixedContent`：chatTime 非空且能被 `time.Parse` 解析（layout：`2006-01-02T15:04:05Z07:00`、`2006-01-02 15:04:05`）→ 摘要前缀 `[YYYY-MM-DD] `；空/解析失败 → 原样
+  - 两个 gate 模式都生效（off 直写 Summary；on 先加前缀再走 `provider.DeriveWriteEvent`）
+- **测试**：`internal/bench/server_test.go` 新增 `TestBench_TemporalPrefixInMemory`（带 chat_time 检索含 `[2029-05-04]` + 内容；无 chat_time 摘要原样无 `[`；gate-on 模式同样带前缀）
+- **验证**：`go build ./...` + `go test ./internal/bench/ ./cmd/...` 全绿（12 passed）；`go vet ./internal/bench/` 干净
+- **未提交**（遵父任务指令）；未改 `core.WriteMemory/WriteEvent/CreatedAt/WeightDecay`
+
 ## 最近工作（2026-08-09）— OmniMemEval benchmark 集成（分支 feature/omnimemeval-benchmark，默认不合 main）
 
 - 用户指令：单独开分支做测评，不合入 main，除非 adapter 对项目推进/完整性有正向价值。
@@ -50,7 +61,12 @@
   - 智谱 embedding-3：官方按账号等级限**在途并发**（V0=50/V1=100/V2=300/V3=500）；实测 64 并发全过 → 账号至少 V1；建议 32-64
   - DeepSeek chat：实测 32 并发全过；answer/judge 16-32 worker
   - **最大提速点**：bench `handleAdd` 当前顺序 embedding → 改并发可 30-60× 缩短 ingestion
-- 待办：以上两个文档需提交；后续按 handoff 启动 Agent Memory 轨。
+- **v3.0 迭代计划**：`docs/v0.3/06-v3-iteration-plan.md`（P0：时序记忆/并发 ingestion/judge 对齐；P1：Update Tracking/Retrieval 增强；P2：Context 精简；最后 Agent Memory 轨）。
+- **精确并发数字**（官方）：
+  - DeepSeek v4-flash **2500 并发**上限（v4-pro 500；chat/reasoner 已退役）
+  - 智谱 embedding 按账号等级限在途并发：V0=50/V1=100/V2=300/V3=500；实测本账号 ≥64 安全；批量 API 5 折
+- **时序修复 subagent 进行中**：bench 写入把 chat_time 前缀进记忆摘要（`[2029-05-04] content`），不碰 CreatedAt/decay。完成验证后重跑可看 LoCoMo Temporal 是否回升。
+- 待办：subagent 时序修复验收 → 按 v3.0 计划跑下一轮（并发 ingestion + 关 thinking 重跑）→ Agent Memory 轨。
 
 ## 最近工作（2026-08-09）— OmniMemEval 评测框架评估（研究任务，未改代码）
 

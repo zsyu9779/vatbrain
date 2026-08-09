@@ -56,6 +56,27 @@ python data/halumem/prepare_halumem.py
 `--version` 隔离结果目录；`--clear 1` 在 ingestion 前通过 `delete()` 清理该版本 user
 的旧记忆。
 
+> 后台运行或重定向日志时，给 runner 进程加 `PYTHONUNBUFFERED=1`，否则 Python stdout
+> 被缓冲、进度日志会滞后（bench server 的 Go 日志不受影响）。
+
+### 已实测的第三方端点组合（2026-08-09）
+
+- **chat（answer/judge）**：DeepSeek `https://api.deepseek.com/v1`，模型 `deepseek-v4-flash`
+- **embedding**：智谱 `https://open.bigmodel.cn/api/paas/v4`（→ `/embeddings`），模型 `embedding-3`（2048 维）
+
+`.env.bench` 里填：
+```bash
+VATBRAIN_EMBEDDER_SEMANTIC_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+VATBRAIN_EMBEDDER_SEMANTIC_MODEL=embedding-3
+```
+`.env.vatbrain` 里填：
+```bash
+ANSWER_MODEL="deepseek-v4-flash"
+ANSWER_BASE_URL="https://api.deepseek.com/v1"
+EVAL_MODEL="deepseek-v4-flash"
+EVAL_BASE_URL="https://api.deepseek.com/v1"
+```
+
 ## Gate 模式（评测范围开关）
 
 `vatbrain-bench --gate <off|on>`（或 `VATBRAIN_BENCH_GATE_MODE`）：

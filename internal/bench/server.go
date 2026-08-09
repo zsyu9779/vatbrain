@@ -198,7 +198,10 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		Addr:         addr,
 		Handler:      s.Routes(),
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		// One /v1/add can legitimately take minutes: each message runs the
+		// full write pipeline (embedding etc.). A 60s WriteTimeout would kill
+		// large benchmark sessions mid-write.
+		WriteTimeout: 30 * time.Minute,
 		IdleTimeout:  120 * time.Second,
 	}
 
@@ -253,7 +256,7 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		event := s.eventFor(content)
+		event := s.eventFor(content, msg.ChatTime)
 		res, err := core.WriteMemory(r.Context(), s.deps, event,
 			req.UserID, s.opts.Language, "", s.opts.TaskType)
 		if err != nil {
@@ -362,14 +365,38 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// eventFor builds the WriteEvent for one message. In GateModeOff the event is
-// force-confirmed so the significance gate lets it through; in GateModeOn the
-// production derivation (provider.DeriveWriteEvent) runs untouched.
-func (s *Server) eventFor(content string) core.WriteEvent {
+// eventFor builds the WriteEvent for one message. When the message carries a
+// parseable chat_time, the summary is prefixed with the event's date
+// ("[2006-01-02] ") so retrieved context preserves temporal ordering. In
+// GateModeOff the event is force-confirmed so the significance gate lets it
+// through; in GateModeOn the production derivation
+// (provider.DeriveWriteEvent) runs untouched.
+func (s *Server) eventFor(content, chatTime string) core.WriteEvent {
+	content = datePrefixedContent(content, chatTime)
 	if s.opts.GateMode == GateModeOff {
 		return core.WriteEvent{Summary: content, UserConfirmed: true}
 	}
 	return provider.DeriveWriteEvent(content, "")
+}
+
+// datePrefixedContent returns content prefixed with the message date as
+// "[2006-01-02] " when chatTime parses under a common layout; an empty or
+// unparseable chatTime leaves content unchanged (best-effort).
+func datePrefixedContent(content, chatTime string) string {
+	chatTime = strings.TrimSpace(chatTime)
+	if chatTime == "" {
+		return content
+	}
+	for _, layout := range []string{
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02 15:04:05",
+	} {
+		t, err := time.Parse(layout, chatTime)
+		if err == nil {
+			return "[" + t.Format("2006-01-02") + "] " + content
+		}
+	}
+	return content
 }
 
 // ── Middleware + JSON helpers ───────────────────────────────────────────────
