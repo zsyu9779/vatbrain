@@ -2,6 +2,7 @@ package core
 
 import (
 	"math"
+	"os"
 	"sort"
 	"time"
 
@@ -17,6 +18,42 @@ type RiskRequest struct {
 	Language  string
 	TaskType  models.TaskType
 	UserGoal  string
+	// Complexity is the average structural complexity of the target modules
+	// (0..1, default 0.5 = neutral). ROADMAP v0.3 formula:
+	// 风险 = Pitfall 密度 × 时间衰减 × 模块复杂度. High complexity amplifies risk.
+	Complexity float64
+}
+
+// complexityFactor maps a module-complexity score (0..1) onto a risk
+// multiplier: complexity 0 → ×0.5, 0.5 (neutral) → ×1.0, 1.0 → ×1.5.
+func complexityFactor(c float64) float64 {
+	if c <= 0 {
+		return 0.5
+	}
+	if c > 1 {
+		return 1.5
+	}
+	return 0.5 + c
+}
+
+// EstimateModuleComplexity returns a 0..1 complexity proxy for a set of files
+// based on log-scaled size (1KB→~0.43, 100KB→~0.71, 10MB→~1.0). Files that
+// cannot be stat'ed default to 0.5 (neutral) so callers without disk access
+// stay deterministic.
+func EstimateModuleComplexity(files []string) float64 {
+	if len(files) == 0 {
+		return 0.5
+	}
+	var total float64
+	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil {
+			total += 0.5
+			continue
+		}
+		total += math.Min(1.0, math.Log10(float64(info.Size())+1)/7.0)
+	}
+	return total / float64(len(files))
 }
 
 // RiskResult is the vatbrain-side output of prepare_edit_context.
@@ -88,11 +125,18 @@ func ComputeRisk(req RiskRequest, injectable []models.PitfallMemory,
 	// Normalise risk to [0,1]; a single strong pitfall is enough to flag.
 	risk := math.Min(1.0, total)
 
+	// ROADMAP v0.3: 风险 = Pitfall 密度 × 时间衰减 × 模块复杂度。
+	// 复杂度放大风险（复杂度 1.0 → ×1.5）。
+	risk = math.Min(1.0, risk*complexityFactor(req.Complexity))
+
 	if len(episodes) > 0 {
 		reasons["memory_recall"] = true
 	}
 	if req.Files != nil && len(req.Files) > 0 {
 		reasons["editing_files"] = true
+	}
+	if req.Complexity >= 0.75 {
+		reasons["high_complexity"] = true
 	}
 
 	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })

@@ -70,11 +70,12 @@ func prepareEditContextTool(a *app.App) server.ServerTool {
 			}
 
 			risk := core.ComputeRisk(core.RiskRequest{
-				Files:     files,
-				ProjectID: projectID,
-				Language:  language,
-				TaskType:  taskType,
-				UserGoal:  userGoal,
+				Files:      files,
+				ProjectID:  projectID,
+				Language:   language,
+				TaskType:   taskType,
+				UserGoal:   userGoal,
+				Complexity: core.EstimateModuleComplexity(files),
 			}, pitfalls, episodes, time.Now().UTC())
 
 			// Record the surfaced pitfalls as "shown" for the interference

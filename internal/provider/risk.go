@@ -76,11 +76,12 @@ func (s *Server) handlePrepareEditContext(ctx context.Context, req rpcRequest) r
 	}
 
 	risk := core.ComputeRisk(core.RiskRequest{
-		Files:     p.Files,
-		ProjectID: projectID,
-		Language:  p.Language,
-		TaskType:  models.TaskType(p.TaskType),
-		UserGoal:  p.UserGoal,
+		Files:      p.Files,
+		ProjectID:  projectID,
+		Language:   p.Language,
+		TaskType:   models.TaskType(p.TaskType),
+		UserGoal:   p.UserGoal,
+		Complexity: core.EstimateModuleComplexity(p.Files),
 	}, pitfalls, episodes, time.Now().UTC())
 
 	for _, pf := range risk.Pitfalls {

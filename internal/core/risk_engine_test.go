@@ -1,10 +1,13 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/vatbrain/vatbrain/internal/models"
 )
@@ -23,7 +26,7 @@ func TestComputeRisk_ConfirmedPitfall_FlagsRisk(t *testing.T) {
 		Status:            models.PitfallConfirmed,
 	}
 
-	res := ComputeRisk(RiskRequest{ProjectID: "coder"}, []models.PitfallMemory{p}, nil, now)
+	res := ComputeRisk(RiskRequest{ProjectID: "coder", Complexity: 0.5}, []models.PitfallMemory{p}, nil, now)
 	assert.True(t, res.RiskScore > 0.6, "近期高频 confirmed pitfall 应产生高风险，got %v", res.RiskScore)
 	assert.Contains(t, res.ReasonCodes, "recent_error")
 	assert.Contains(t, res.ReasonCodes, "high_risk_pitfall")
@@ -97,6 +100,38 @@ func TestPitfallMemory_InterferenceRate(t *testing.T) {
 	assert.InDelta(t, 0.3, p.InterferenceRate(), 1e-9)
 	p2 := models.PitfallMemory{}
 	assert.Equal(t, 0.0, p2.InterferenceRate())
+}
+
+func TestComputeRisk_ComplexityAmplifies(t *testing.T) {
+	now := time.Now()
+	p := models.PitfallMemory{
+		EntityID:        "big_module.go",
+		OccurrenceCount: 3,
+		LastOccurredAt:  &now,
+		TrustLevel:      models.TrustLevelMax,
+		Status:          models.PitfallConfirmed,
+	}
+	// 同一 pitfall：低复杂度 vs 高复杂度模块 → 风险不同
+	low := ComputeRisk(RiskRequest{Complexity: 0.0}, []models.PitfallMemory{p}, nil, now)
+	high := ComputeRisk(RiskRequest{Complexity: 1.0}, []models.PitfallMemory{p}, nil, now)
+	assert.Less(t, low.RiskScore, high.RiskScore,
+		"高复杂度模块风险应更高（×1.5 vs ×0.5）")
+	assert.Greater(t, high.RiskScore, 0.6)
+	assert.Contains(t, high.ReasonCodes, "high_complexity")
+}
+
+func TestEstimateModuleComplexity_SizeScaled(t *testing.T) {
+	// 空/缺文件 → 中性 0.5
+	assert.InDelta(t, 0.5, EstimateModuleComplexity(nil), 1e-9)
+	assert.InDelta(t, 0.5, EstimateModuleComplexity([]string{"/no/such/file.go"}), 1e-9)
+
+	// 大文件 → 高复杂度
+	big := make([]byte, 200*1024) // 200KB
+	path := filepath.Join(t.TempDir(), "big.go")
+	require.NoError(t, os.WriteFile(path, big, 0o644))
+	// log10(200000)/7 ≈ 0.76
+	est := EstimateModuleComplexity([]string{path})
+	assert.Greater(t, est, 0.7, "200KB 文件复杂度应较高，got %.2f", est)
 }
 
 func TestProtectionDecayedWeight_SlowsDecay(t *testing.T) {
