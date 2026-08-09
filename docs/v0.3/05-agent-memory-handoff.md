@@ -108,9 +108,16 @@ export LLM_DISABLE_THINKING=1
 
 - **实测**：本账号 64 并发、128 请求全部 200（~80 req/s），无 429 → 至少 V1（≥100）。建议 **上限保守设 32-64**（低于任何等级限制）。
 - 单请求硬限：64 文本/请求、3072 token/文本。**批量到 64 文本/请求**可最大化单请求吞吐。
-- 限流错误码：1302（rate limit）、1305/429（过载）；`_retry` 需处理 1302。
+- 限流错误码：1302（并发上限）、1305/429（过载）；`_retry` 需处理 1302。
+- **批量 API**（非实时）：10K 请求/文件、2M 队列、**5 折价**——大规模 ingestion 可选。
+- 定价：0.5 元/百万 token（输入计费），无免费档。
+- 来源：https://docs.bigmodel.cn/cn/guide/models/embedding/embedding-3 · https://docs.bigmodel.cn/cn/api/rate-limit
 
-**DeepSeek chat（实测）**：32 并发、64 请求全 200，无 429。answer/judge worker **16-32** 安全（长文本吞吐低，从 16 起步）。
+**DeepSeek chat（官方 + 实测）**：
+- **官方并发上限（账号级，非 QPS/RPM/TPM）**：`deepseek-v4-flash` = **2500 并发**，`deepseek-v4-pro` = 500。超限返回 429；请求从发送到响应完成占一个槽位。
+- 实测 32 并发全过 → answer/judge worker 可开 **100-500**（远高于之前保守的 16-32）。
+- ⚠️ thinking 模式占槽位更久 + 多耗 token → 已用 `LLM_DISABLE_THINKING=1` 关闭。
+- ⚠️ 模型名：2026-07-24 起 deepseek-chat/reasoner 已退役，只有 v4-flash / v4-pro。
 
 **关键机会**：当前 bench server 的 embedding 是**顺序**调用（逐条消息）。把写入改成**并发 embedding**（32-64），ingestion 可缩短 **30-60×**（LME 13560 次写入从 ~2.6h 降到 ~10 分钟量级）。这是下一轮最大的提速点。
 - 实现提示：`cmd/vatbrain-bench` 的 `handleAdd` 顺序调 `WriteMemory`（SQLite 单写者）。可先并发做 embedding、再顺序写库；或评估 SQLite 写锁。
