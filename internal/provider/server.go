@@ -180,6 +180,12 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
 		return s.handleOnSessionSwitch(req)
 	case MethodPrepareEditContext:
 		return s.handlePrepareEditContext(ctx, req)
+	case MethodMaintenance:
+		return s.handleMaintenance(req)
+	case MethodPreCompress:
+		return s.handlePreCompress(req)
+	case MethodOnDelegation:
+		return s.handleOnDelegation(ctx, req)
 	case MethodPing:
 		return newResponse(req.ID, map[string]bool{"pong": true})
 	case MethodShutdown:

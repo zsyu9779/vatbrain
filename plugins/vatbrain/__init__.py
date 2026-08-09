@@ -202,6 +202,61 @@ class VatBrainMemoryProvider(MemoryProvider):
         except Exception as exc:
             logger.warning("vatbrain: %s failed (best-effort): %s", method, exc)
 
+    def on_turn_start(self, turn_number: int, message: str, **kwargs: Any) -> None:
+        """Per-turn tick: every maintenance_interval turns, fire a lightweight
+        daemon maintenance RPC (weight recompute / cold-store migration hook)."""
+        if not getattr(self, "_turn_count", None):
+            self._turn_count = 0
+        self._turn_count += 1
+        interval = int(os.getenv("VATBRAIN_MAINTENANCE_INTERVAL", "10") or 10)
+        if self._turn_count % interval == 0:
+            threading.Thread(
+                target=self._background_rpc,
+                args=("maintenance", {"session_id": self._session_id}),
+                name="vatbrain-maintenance",
+                daemon=True,
+            ).start()
+
+    def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+        """Derive a compression-worthy insight from messages about to be
+        discarded; hermes folds it into the compression summary prompt."""
+        texts = []
+        for m in messages or []:
+            content = m.get("content", "") if isinstance(m, dict) else str(m)
+            if isinstance(content, str) and content.strip():
+                texts.append(content.strip())
+        if not texts:
+            return ""
+        try:
+            result = self._rpc("pre_compress", {
+                "session_id": self._session_id,
+                "messages": texts[-20:],  # 有界：只送最近 20 条
+            }, timeout=_PREFETCH_TIMEOUT_S)
+            return result.get("insight", "")
+        except Exception as exc:
+            logger.debug("vatbrain: pre_compress failed (best-effort): %s", exc)
+            return ""
+
+    def on_delegation(self, task: str, result: str, *,
+                      child_session_id: str = "", **kwargs: Any) -> None:
+        """Parent-side observation of a subagent delegation → Episodic ingest."""
+        threading.Thread(
+            target=self._background_rpc,
+            args=("on_delegation", {
+                "session_id": self._session_id,
+                "task": task,
+                "result": result,
+                "child_session_id": child_session_id,
+            }),
+            name="vatbrain-delegation",
+            daemon=True,
+        ).start()
+
+    def backup_paths(self) -> List[str]:
+        """No external paths — the daemon keeps its SQLite under
+        $HERMES_HOME/vatbrain/, already covered by `hermes backup`."""
+        return []
+
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """Expose the v0.3 proactive risk-injection tool to the model."""
         return [{

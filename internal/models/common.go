@@ -15,13 +15,17 @@ const (
 	SourceTypeINFERRED      SourceType = "INFERRED"
 	SourceTypeUserDeclared  SourceType = "USER_DECLARED"
 	SourceTypeSummarized    SourceType = "SUMMARIZED"
+	// SourceTypeDelegation marks parent-side observations of subagent work
+	// (hermes on_delegation hook → Episodic ingest).
+	SourceTypeDelegation SourceType = "DELEGATION"
 )
 
 // IsValid reports whether s is a known source type.
 func (s SourceType) IsValid() bool {
 	switch s {
 	case SourceTypeAST, SourceTypeLLM, SourceTypeUSER, SourceTypeDEBUG,
-		SourceTypeINFERRED, SourceTypeUserDeclared, SourceTypeSummarized:
+		SourceTypeINFERRED, SourceTypeUserDeclared, SourceTypeSummarized,
+		SourceTypeDelegation:
 		return true
 	}
 	return false
@@ -30,7 +34,8 @@ func (s SourceType) IsValid() bool {
 // IsEpisodicSource reports whether s is used for episodic memory sources.
 func (s SourceType) IsEpisodicSource() bool {
 	switch s {
-	case SourceTypeAST, SourceTypeLLM, SourceTypeUSER, SourceTypeDEBUG:
+	case SourceTypeAST, SourceTypeLLM, SourceTypeUSER, SourceTypeDEBUG,
+		SourceTypeDelegation:
 		return true
 	}
 	return false
