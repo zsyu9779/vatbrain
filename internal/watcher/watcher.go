@@ -23,9 +23,20 @@ type MemoryWatcher struct {
 	pollInterval time.Duration
 	seenSet      *seenSet
 
+	// lastScanStats records the per-provider outcome of the most recent scan
+	// cycle (new vs skipped), surfaced by list_adapters (v0.2.1 GA).
+	lastScanStats map[string]ScanStat
+	scanMu        sync.Mutex
+
 	mu      sync.Mutex
 	running bool
 	stopCh  chan struct{}
+}
+
+// ScanStat is the per-provider outcome of one scan cycle.
+type ScanStat struct {
+	NewCount     int `json:"new_count"`
+	SkippedCount int `json:"skipped_count"`
 }
 
 // NewMemoryWatcher creates a MemoryWatcher. emb enables embedding-based
@@ -50,13 +61,25 @@ func NewMemoryWatcher(
 		}
 	}
 	return &MemoryWatcher{
-		registry:     reg,
-		refiner:      refiner,
-		store:        s,
-		embedder:     emb,
-		pollInterval: pollInterval,
-		seenSet:      newSeenSet(seenMaxEntries),
+		registry:      reg,
+		refiner:       refiner,
+		store:         s,
+		embedder:      emb,
+		pollInterval:  pollInterval,
+		seenSet:       newSeenSet(seenMaxEntries),
+		lastScanStats: make(map[string]ScanStat),
 	}
+}
+
+// ScanStats returns the per-provider outcome of the most recent scan cycle.
+func (w *MemoryWatcher) ScanStats() map[string]ScanStat {
+	w.scanMu.Lock()
+	defer w.scanMu.Unlock()
+	out := make(map[string]ScanStat, len(w.lastScanStats))
+	for k, v := range w.lastScanStats {
+		out[k] = v
+	}
+	return out
 }
 
 // Registry returns the provider registry for external access (e.g. MCP tools).
@@ -130,6 +153,7 @@ type SyncResult struct {
 // refines them, and writes them to the store.
 func (w *MemoryWatcher) scanAll(ctx context.Context) SyncResult {
 	var result SyncResult
+	perProvider := make(map[string]ScanStat, len(w.registry.List()))
 
 	for _, provider := range w.registry.List() {
 		result.AdaptersScanned++
@@ -141,11 +165,13 @@ func (w *MemoryWatcher) scanAll(ctx context.Context) SyncResult {
 		}
 
 		result.TotalFound += len(raws)
+		stat := ScanStat{}
 
 		for _, raw := range raws {
 			// Dedup: skip already-seen memories.
 			if w.seenSet.Has(raw.SourceURI, raw.ContentHash) {
 				result.TotalSkipped++
+				stat.SkippedCount++
 				continue
 			}
 			w.seenSet.Mark(raw.SourceURI, raw.ContentHash)
@@ -159,6 +185,7 @@ func (w *MemoryWatcher) scanAll(ctx context.Context) SyncResult {
 			if ep == nil {
 				// Refiner decided to skip (low confidence).
 				result.TotalSkipped++
+				stat.SkippedCount++
 				continue
 			}
 
@@ -173,8 +200,16 @@ func (w *MemoryWatcher) scanAll(ctx context.Context) SyncResult {
 				ep.EntityGroup, ep.TaskType)
 
 			result.TotalWritten++
+			stat.NewCount++
 		}
+
+		perProvider[provider.Name()] = stat
 	}
+
+	// Record per-provider stats for list_adapters (v0.2.1 GA).
+	w.scanMu.Lock()
+	w.lastScanStats = perProvider
+	w.scanMu.Unlock()
 
 	if result.TotalFound > 0 {
 		slog.Info("watcher: scan cycle complete",

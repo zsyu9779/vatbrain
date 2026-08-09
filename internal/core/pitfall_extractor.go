@@ -27,6 +27,11 @@ type PitfallExtractor struct {
 	MaxConcurrency        int // max concurrent LLM calls per entity group
 }
 
+// lexicalClusterMergeThreshold is the HAC merge threshold used when all
+// embeddings lack signal (stub embedder / no API key) and clustering falls
+// back to char-bigram Dice, whose scale is lower than cosine similarity.
+const lexicalClusterMergeThreshold = 0.3
+
 // PitfallCandidate is a provisional pitfall before LLM structuring.
 type PitfallCandidate struct {
 	EntityID    string
@@ -146,7 +151,13 @@ func (pe *PitfallExtractor) subCluster(ctx context.Context, g EntityGroup) []Sub
 			embeddings[i] = nil
 			continue
 		}
-		embeddings[i] = vector.Float32To64(emb)
+		v := vector.Float32To64(emb)
+		// 零向量（stub embedder / 无 API key）无语义信号 → 标记 nil 走词法回退。
+		if !vectorHasMagnitude64(v) {
+			embeddings[i] = nil
+			continue
+		}
+		embeddings[i] = v
 	}
 
 	// Initialize each episodic as its own cluster.
@@ -155,12 +166,26 @@ func (pe *PitfallExtractor) subCluster(ctx context.Context, g EntityGroup) []Sub
 		clusters[i] = []int{i}
 	}
 
+	// 词法模式：全部 embedding 无信号（stub / 无 API key）时，bigram Dice 的
+	// 量纲低于 embedding 余弦——用更低的词法合并阈值（0.85 余弦 → 0.3 bigram）。
+	lexicalMode := true
+	for _, e := range embeddings {
+		if e != nil {
+			lexicalMode = false
+			break
+		}
+	}
+	mergeThreshold := pe.MergeThreshold
+	if lexicalMode {
+		mergeThreshold = lexicalClusterMergeThreshold
+	}
+
 	// Repeatedly merge closest pair until no pair >= mergeThreshold.
 	for {
 		bestI, bestJ, bestSim := -1, -1, 0.0
 		for i := 0; i < len(clusters); i++ {
 			for j := i + 1; j < len(clusters); j++ {
-				sim := clusterSimilarity(clusters[i], clusters[j], embeddings)
+				sim := clusterSimilarity(clusters[i], clusters[j], embeddings, g.Episodics)
 				if sim > bestSim {
 					bestSim = sim
 					bestI = i
@@ -168,7 +193,7 @@ func (pe *PitfallExtractor) subCluster(ctx context.Context, g EntityGroup) []Sub
 				}
 			}
 		}
-		if bestSim < pe.MergeThreshold || bestI < 0 {
+		if bestSim < mergeThreshold || bestI < 0 {
 			break
 		}
 		// Merge cluster j into i.
@@ -188,7 +213,7 @@ func (pe *PitfallExtractor) subCluster(ctx context.Context, g EntityGroup) []Sub
 
 // clusterSimilarity computes the average pairwise cosine similarity between
 // two clusters. Returns 0 if either cluster has no valid embeddings.
-func clusterSimilarity(a, b []int, embeddings [][]float64) float64 {
+func clusterSimilarity(a, b []int, embeddings [][]float64, episodics []store.EpisodicScanItem) float64 {
 	if len(a) == 0 || len(b) == 0 {
 		return 0
 	}
@@ -208,9 +233,85 @@ func clusterSimilarity(a, b []int, embeddings [][]float64) float64 {
 		}
 	}
 	if count == 0 {
-		return 0
+		// F1 回退：零向量（stub embedder / 无 API key）时用 CJK 安全的字符
+		// bigram 重叠作为聚类代理，避免中文 debug 记忆静默不聚类。
+		return bigramOverlapCluster(a, b, episodics)
 	}
 	return total / float64(count)
+}
+
+// bigramOverlapCluster returns the average char-bigram Dice overlap between
+// two clusters' episode summaries (CJK-safe lexical proxy).
+func bigramOverlapCluster(a, b []int, episodics []store.EpisodicScanItem) float64 {
+	var total float64
+	var pairs int
+	for _, ai := range a {
+		if ai < 0 || ai >= len(episodics) {
+			continue
+		}
+		for _, bi := range b {
+			if bi < 0 || bi >= len(episodics) {
+				continue
+			}
+			total += charBigramOverlap(episodics[ai].Summary, episodics[bi].Summary)
+			pairs++
+		}
+	}
+	if pairs == 0 {
+		return 0
+	}
+	return total / float64(pairs)
+}
+
+// charBigramOverlap is the Dice coefficient of the char-bigram sets of a and b.
+func charBigramOverlap(a, b string) float64 {
+	if a == "" || b == "" {
+		return 0
+	}
+	as := charBigrams(a)
+	bs := charBigrams(b)
+	if len(as) == 0 || len(bs) == 0 {
+		return 0
+	}
+	inter := 0
+	for g := range as {
+		if _, ok := bs[g]; ok {
+			inter++
+		}
+	}
+	return 2.0 * float64(inter) / float64(len(as)+len(bs))
+}
+
+// charBigrams builds the character-bigram set of s (Chinese + Latin safe).
+func charBigrams(s string) map[string]struct{} {
+	r := []rune(s)
+	if len(r) == 1 {
+		return map[string]struct{}{string(r[0]): {}}
+	}
+	out := make(map[string]struct{}, len(r)-1)
+	for i := 0; i+1 < len(r); i++ {
+		out[string(r[i:i+2])] = struct{}{}
+	}
+	return out
+}
+
+// truncateRunes bounds a string to max runes (CJK-aware).
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
+}
+
+// vectorHasMagnitude64 reports whether v has any non-zero component.
+func vectorHasMagnitude64(v []float64) bool {
+	for _, c := range v {
+		if c != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // extractFromSubCluster calls the LLM to extract a structured pitfall from a
@@ -298,14 +399,20 @@ Rules:
 	return pf, nil
 }
 
-// extractHeuristic falls back to basic pattern extraction without LLM.
+// extractHeuristic falls back to pattern extraction without LLM. The
+// signature is anchored on the most representative episode summary (the one
+// with the highest average overlap to the rest) so it carries the real error
+// content and remains text-retrievable (CJK-safe), instead of a generic
+// "Debug pattern for <entity>" placeholder.
 func (pe *PitfallExtractor) extractHeuristic(
 	entityID, projectID, language string,
 	sc SubCluster, sourceIDs []uuid.UUID,
 ) (models.PitfallMemory, error) {
 	now := time.Now().UTC()
-	signature := fmt.Sprintf("Debug pattern for %s (%d sessions)", entityID, len(sc.Episodics))
-	fixStrategy := fmt.Sprintf("Review %d debug sessions for entity %s", len(sc.Episodics), entityID)
+
+	representative := representativeSummary(sc.Episodics)
+	signature := truncateRunes(fmt.Sprintf("%s: %s", entityID, representative), 200)
+	fixStrategy := truncateRunes(representative, 200)
 
 	pf := models.PitfallMemory{
 		ID:                uuid.New(),
@@ -325,6 +432,34 @@ func (pe *PitfallExtractor) extractHeuristic(
 		SourceEpisodicIDs: sourceIDs,
 	}
 	return pf, nil
+}
+
+// representativeSummary picks the episode summary with the highest average
+// char-bigram overlap to the rest of the cluster — the one that best captures
+// the shared error pattern.
+func representativeSummary(episodics []store.EpisodicScanItem) string {
+	if len(episodics) == 0 {
+		return ""
+	}
+	if len(episodics) == 1 {
+		return episodics[0].Summary
+	}
+	bestIdx, bestScore := 0, -1.0
+	for i := range episodics {
+		var total float64
+		for j := range episodics {
+			if i == j {
+				continue
+			}
+			total += charBigramOverlap(episodics[i].Summary, episodics[j].Summary)
+		}
+		avg := total / float64(len(episodics)-1)
+		if avg > bestScore {
+			bestScore = avg
+			bestIdx = i
+		}
+	}
+	return episodics[bestIdx].Summary
 }
 
 // parsePitfallResponse extracts JSON from an LLM response, handling markdown

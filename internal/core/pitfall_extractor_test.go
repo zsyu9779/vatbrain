@@ -3,12 +3,14 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/llm"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
@@ -270,8 +272,8 @@ func TestDeduplicatePitfalls_NoDuplicates(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	pitfalls := []models.PitfallMemory{
-		{ID: uuid.New(), EntityID: "func:A", Signature: "pattern A", OccurrenceCount: 3, CreatedAt: now, UpdatedAt: now},
-		{ID: uuid.New(), EntityID: "func:B", Signature: "pattern B", OccurrenceCount: 2, CreatedAt: now, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:A", Signature: "pattern A", OccurrenceCount: 3, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:B", Signature: "pattern B", OccurrenceCount: 2, UpdatedAt: now},
 	}
 	result := pe.deduplicatePitfalls(context.Background(), pitfalls)
 	assert.Equal(t, 2, len(result))
@@ -285,12 +287,12 @@ func TestDeduplicatePitfalls_MergeIdentical(t *testing.T) {
 	now := time.Now().UTC()
 	// Same entity + same signature text → same embedding → high similarity → merge.
 	pitfalls := []models.PitfallMemory{
-		{ID: uuid.New(), EntityID: "func:A", Signature: "identical pattern", OccurrenceCount: 5, FixStrategy: "strategy 1", CreatedAt: now, UpdatedAt: now},
-		{ID: uuid.New(), EntityID: "func:A", Signature: "identical pattern", OccurrenceCount: 2, FixStrategy: "strategy 2 longer", CreatedAt: now, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:A", Signature: "identical pattern", OccurrenceCount: 5, FixStrategy: "strategy 1", UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:A", Signature: "identical pattern", OccurrenceCount: 2, FixStrategy: "strategy 2 longer", UpdatedAt: now},
 	}
 	result := pe.deduplicatePitfalls(context.Background(), pitfalls)
 	assert.Equal(t, 1, len(result))
-	assert.Equal(t, 7, result[0].OccurrenceCount) // 5 + 2
+	assert.Equal(t, 7, result[0].OccurrenceCount)               // 5 + 2
 	assert.Equal(t, "strategy 2 longer", result[0].FixStrategy) // longer strategy wins
 }
 
@@ -302,8 +304,8 @@ func TestDeduplicatePitfalls_DifferentEntitiesKept(t *testing.T) {
 	now := time.Now().UTC()
 	// Same signature, different entities → kept separate.
 	pitfalls := []models.PitfallMemory{
-		{ID: uuid.New(), EntityID: "func:A", Signature: "same pattern", OccurrenceCount: 3, CreatedAt: now, UpdatedAt: now},
-		{ID: uuid.New(), EntityID: "func:B", Signature: "same pattern", OccurrenceCount: 2, CreatedAt: now, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:A", Signature: "same pattern", OccurrenceCount: 3, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:B", Signature: "same pattern", OccurrenceCount: 2, UpdatedAt: now},
 	}
 	result := pe.deduplicatePitfalls(context.Background(), pitfalls)
 	assert.Equal(t, 2, len(result), "different entities must not be merged")
@@ -313,7 +315,7 @@ func TestDeduplicatePitfalls_SingleItem(t *testing.T) {
 	pe := &PitfallExtractor{Embedder: newIDEmbedder(16)}
 	now := time.Now().UTC()
 	pitfalls := []models.PitfallMemory{
-		{ID: uuid.New(), EntityID: "func:A", Signature: "only one", OccurrenceCount: 1, CreatedAt: now, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:A", Signature: "only one", OccurrenceCount: 1, UpdatedAt: now},
 	}
 	result := pe.deduplicatePitfalls(context.Background(), pitfalls)
 	assert.Equal(t, 1, len(result))
@@ -325,14 +327,14 @@ func TestMergePitfallGroup_OccurrenceCount(t *testing.T) {
 	pe := &PitfallExtractor{}
 	now := time.Now().UTC()
 	pitfalls := []models.PitfallMemory{
-		{ID: uuid.New(), EntityID: "func:A", Signature: "sig", OccurrenceCount: 10, FixStrategy: "", WasUserCorrected: false, CreatedAt: now, UpdatedAt: now},
-		{ID: uuid.New(), EntityID: "func:A", Signature: "sig", OccurrenceCount: 2, FixStrategy: "better fix", WasUserCorrected: true, CreatedAt: now, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:A", Signature: "sig", OccurrenceCount: 10, FixStrategy: "", WasUserCorrected: false, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:A", Signature: "sig", OccurrenceCount: 2, FixStrategy: "better fix", WasUserCorrected: true, UpdatedAt: now},
 	}
 	mg := pitfallMergeGroup{primary: 0, members: []int{0, 1}}
 	result := pe.mergePitfallGroup(pitfalls, mg)
-	assert.Equal(t, 12, result.OccurrenceCount) // 10 + 2
+	assert.Equal(t, 12, result.OccurrenceCount)       // 10 + 2
 	assert.Equal(t, "better fix", result.FixStrategy) // longer strategy
-	assert.True(t, result.WasUserCorrected) // one was user-corrected
+	assert.True(t, result.WasUserCorrected)           // one was user-corrected
 }
 
 func TestMergePitfallGroup_PicksHigherOccurrenceAsBase(t *testing.T) {
@@ -340,8 +342,8 @@ func TestMergePitfallGroup_PicksHigherOccurrenceAsBase(t *testing.T) {
 	now := time.Now().UTC()
 	later := now.Add(time.Hour)
 	pitfalls := []models.PitfallMemory{
-		{ID: uuid.New(), EntityID: "func:A", Signature: "sig", OccurrenceCount: 1, FixStrategy: "short", LastOccurredAt: &now, CreatedAt: now, UpdatedAt: now},
-		{ID: uuid.New(), EntityID: "func:A", Signature: "sig", OccurrenceCount: 8, FixStrategy: "short", LastOccurredAt: &later, CreatedAt: now, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:A", Signature: "sig", OccurrenceCount: 1, FixStrategy: "short", LastOccurredAt: &now, UpdatedAt: now},
+		{ID: uuid.New(), EntityID: "func:A", Signature: "sig", OccurrenceCount: 8, FixStrategy: "short", LastOccurredAt: &later, UpdatedAt: now},
 	}
 	mg := pitfallMergeGroup{primary: 0, members: []int{0, 1}}
 	result := pe.mergePitfallGroup(pitfalls, mg)
@@ -360,7 +362,7 @@ func TestInferEntityType(t *testing.T) {
 	assert.Equal(t, models.EntityTypeConfig, inferEntityType("config:redis.yaml"))
 	assert.Equal(t, models.EntityTypeQuery, inferEntityType("query:SELECT_users"))
 	assert.Equal(t, models.EntityTypeFunction, inferEntityType("unknown_prefix:foo")) // default
-	assert.Equal(t, models.EntityTypeFunction, inferEntityType(""))                    // default
+	assert.Equal(t, models.EntityTypeFunction, inferEntityType(""))                   // default
 }
 
 // ── HAC Sub-Clustering Tests ───────────────────────────────────────────────
@@ -422,4 +424,38 @@ func TestGroupByEntityID(t *testing.T) {
 			t.Errorf("unexpected entity: %s", g.EntityID)
 		}
 	}
+}
+
+// TestExtract_StubEmbedder_LexicalFallback is the F1-regression guard: with a
+// zero-vector embedder (no API key), clustering must fall back to CJK-safe
+// char-bigram overlap and still extract a pitfall — never silently return 0.
+func TestExtract_StubEmbedder_LexicalFallback(t *testing.T) {
+	ctx := context.Background()
+	eps := []store.EpisodicScanItem{
+		{ID: uuid.New(), ProjectID: "p", TaskType: models.TaskTypeDebug,
+			EntityID: "clawfeed-push-v3.py", Summary: "错误：ClawFeed 推送用了 @clawfeed-push-v3.py 的旧脚本导致身份 bug"},
+		{ID: uuid.New(), ProjectID: "p", TaskType: models.TaskTypeDebug,
+			EntityID: "clawfeed-push-v3.py", Summary: "修复：@clawfeed-push-v3.py 必须用 --as bot，否则报错发不出去"},
+		{ID: uuid.New(), ProjectID: "p", TaskType: models.TaskTypeDebug,
+			EntityID: "clawfeed-push-v3.py", Summary: "@clawfeed-push-v3.py 崩溃排查：字段名应该是 total_score 而非 overall_score"},
+	}
+
+	pe := &PitfallExtractor{MinClusterSize: 2, MergeThreshold: 0.85, DedupThreshold: 0.9,
+		Embedder: embedder.NewStubEmbedder(), LLMClient: nil}
+	pitfalls, candidates, _, err := pe.Extract(ctx, eps)
+	require.NoError(t, err)
+	assert.Greater(t, candidates, 0, "零向量 embedder 也应产出候选子簇（词法回退）")
+	assert.NotEmpty(t, pitfalls, "零向量 embedder 也应提取出 pitfall")
+	if len(pitfalls) > 0 {
+		assert.Equal(t, "clawfeed-push-v3.py", pitfalls[0].EntityID)
+		assert.Contains(t, pitfalls[0].Signature, "clawfeed-push-v3.py")
+		assert.False(t, strings.Contains(pitfalls[0].Signature, "Debug pattern for"),
+			"签名应包含真实错误内容而非泛化占位")
+	}
+}
+
+// TestCharBigramOverlap_CJK verifies the CJK-safe lexical proxy.
+func TestCharBigramOverlap_CJK(t *testing.T) {
+	assert.InDelta(t, 1.0, charBigramOverlap("软路由调试", "软路由调试"), 1e-9)
+	assert.Less(t, charBigramOverlap("量子引力", "菜谱烹饪"), 0.1)
 }

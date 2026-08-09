@@ -16,6 +16,8 @@ type adapterInfo struct {
 	LastScanAt  string            `json:"last_scan_at"`
 	LastError   string            `json:"last_error,omitempty"`
 	TotalSeen   int               `json:"total_seen"`
+	NewCount    int               `json:"new_count"`    // v0.2.1 GA: 上次扫描新增
+	SkippedCount int              `json:"skipped_count"` // v0.2.1 GA: 上次扫描去重跳过
 	Watching    bool              `json:"watching"`
 	WatchPath   string            `json:"watch_path"`
 	Config      map[string]string `json:"config"`
@@ -34,22 +36,26 @@ func listAdaptersTool(a *app.App) server.ServerTool {
 			}
 
 			statuses := a.MemoryWatcher.Registry().Statuses()
+			scanStats := a.MemoryWatcher.ScanStats()
 			result := make([]adapterInfo, len(statuses))
 			for i, s := range statuses {
 				lastScan := ""
 				if !s.LastScanAt.IsZero() {
 					lastScan = s.LastScanAt.Format("2006-01-02T15:04:05Z")
 				}
+				stat := scanStats[s.Name]
 				result[i] = adapterInfo{
-					Name:        s.Name,
-					Description: s.Description,
-					Healthy:     s.Healthy,
-					LastScanAt:  lastScan,
-					LastError:   s.LastError,
-					TotalSeen:   s.TotalSeen,
-					Watching:    s.Watching,
-					WatchPath:   s.WatchPath,
-					Config:      s.Config,
+					Name:         s.Name,
+					Description:  s.Description,
+					Healthy:      s.Healthy,
+					LastScanAt:   lastScan,
+					LastError:    s.LastError,
+					TotalSeen:    s.TotalSeen,
+					NewCount:     stat.NewCount,
+					SkippedCount: stat.SkippedCount,
+					Watching:     s.Watching,
+					WatchPath:    s.WatchPath,
+					Config:       s.Config,
 				}
 			}
 
