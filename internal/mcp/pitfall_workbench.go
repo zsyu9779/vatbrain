@@ -210,12 +210,57 @@ func suppressPitfallTool(a *app.App) server.ServerTool {
 			if err := a.Store.UpdatePitfallStatus(ctx, id, models.PitfallSuppressed); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("suppress failed: %v", err)), nil
 			}
-			// Best-effort interference counter bump.
+			// Best-effort interference counter bump + weight drop (逃生阀：
+			// 抑制后不仅状态失效，注入权重也下降)。
 			if cErr := a.Store.AddPitfallCounters(ctx, id, 0, 1); cErr != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("suppress failed to record counter: %v", cErr)), nil
 			}
+			_ = a.Store.ApplyPitfallFeedback(ctx, id, models.PitfallFeedbackIgnored, time.Now().UTC())
 			return mcp.NewToolResultStructured(map[string]string{"status": "suppressed"},
 				fmt.Sprintf("pitfall %s suppressed", idStr)), nil
+		},
+	}
+}
+
+// feedbackPitfallTool is the v0.3 feedback-loop entry point (Capture
+// Feedback): the agent/user reports whether an injection was adopted,
+// ignored, or the error recurred — driving weight up/down and the
+// protection-level escalation.
+func feedbackPitfallTool(a *app.App) server.ServerTool {
+	tool := mcp.NewTool("feedback_pitfall",
+		mcp.WithDescription("Feed back the outcome of a Pitfall injection (v0.3): adopted → weight up; ignored → weight down; recurred → protection level up."),
+		mcp.WithString("pitfall_id", mcp.Required(), mcp.Description("Pitfall ID (uuid)")),
+		mcp.WithString("action", mcp.Required(),
+			mcp.Description("Feedback outcome"),
+			mcp.Enum("adopted", "ignored", "recurred")),
+	)
+
+	return server.ServerTool{
+		Tool: tool,
+		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			idStr, err := req.RequireString("pitfall_id")
+			if err != nil {
+				return mcp.NewToolResultError("pitfall_id is required"), nil
+			}
+			actionStr, err := req.RequireString("action")
+			if err != nil {
+				return mcp.NewToolResultError("action is required"), nil
+			}
+			action := models.PitfallFeedbackAction(actionStr)
+			if !action.IsValid() {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid action %q", actionStr)), nil
+			}
+			id, err := uuid.Parse(idStr)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid pitfall_id: %v", err)), nil
+			}
+			if err := a.Store.ApplyPitfallFeedback(ctx, id, action, time.Now().UTC()); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("feedback failed: %v", err)), nil
+			}
+			return mcp.NewToolResultStructured(map[string]string{
+				"pitfall_id": idStr,
+				"action":     actionStr,
+			}, fmt.Sprintf("pitfall %s feedback: %s", idStr, actionStr)), nil
 		},
 	}
 }

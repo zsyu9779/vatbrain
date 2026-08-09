@@ -99,6 +99,20 @@ func TestPitfallMemory_InterferenceRate(t *testing.T) {
 	assert.Equal(t, 0.0, p2.InterferenceRate())
 }
 
+func TestProtectionDecayedWeight_SlowsDecay(t *testing.T) {
+	base := 1.0
+	days := 90.0
+	// 无保护：90 天显著衰减
+	unprotected := ProtectionDecayedWeight(base, 0, days)
+	// 高保护：衰减明显更慢
+	protected := ProtectionDecayedWeight(base, models.PitfallProtectionLevelMax, days)
+	assert.Less(t, unprotected, protected, "保护级别应减缓衰减")
+	assert.Less(t, unprotected, 0.2, "无保护 90 天应衰减到低值，got %v", unprotected)
+	assert.Greater(t, protected, 0.5, "高保护 90 天应保持较高，got %v", protected)
+	// 无时间流逝 → 原值
+	assert.InDelta(t, 1.0, ProtectionDecayedWeight(1.0, 2, 0), 1e-9)
+}
+
 func TestPitfallMemory_Injectable(t *testing.T) {
 	assert.True(t, models.PitfallMemory{Status: models.PitfallConfirmed}.Injectable())
 	assert.True(t, models.PitfallMemory{

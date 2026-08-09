@@ -97,7 +97,9 @@ CREATE TABLE IF NOT EXISTS pitfall_memories (
     source_episodic_ids TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'proposed',
     times_shown INTEGER NOT NULL DEFAULT 0,
-    times_suppressed INTEGER NOT NULL DEFAULT 0
+    times_suppressed INTEGER NOT NULL DEFAULT 0,
+    times_adopted INTEGER NOT NULL DEFAULT 0,
+    protection_level INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_pitfall_entity ON pitfall_memories(entity_id, project_id);
 CREATE INDEX IF NOT EXISTS idx_pitfall_project ON pitfall_memories(project_id, language);
@@ -132,6 +134,17 @@ func migrate(db *sql.DB) error {
 		"status TEXT NOT NULL DEFAULT 'proposed'",
 		"times_shown INTEGER NOT NULL DEFAULT 0",
 		"times_suppressed INTEGER NOT NULL DEFAULT 0",
+	} {
+		if _, err := db.Exec("ALTER TABLE pitfall_memories ADD COLUMN " + col); err != nil &&
+			!isDuplicateColumnErr(err) {
+			return fmt.Errorf("sqlite migrate pitfall %s: %w", col, err)
+		}
+	}
+
+	// v0.3 feedback loop: adopted counter + protection level.
+	for _, col := range []string{
+		"times_adopted INTEGER NOT NULL DEFAULT 0",
+		"protection_level INTEGER NOT NULL DEFAULT 0",
 	} {
 		if _, err := db.Exec("ALTER TABLE pitfall_memories ADD COLUMN " + col); err != nil &&
 			!isDuplicateColumnErr(err) {

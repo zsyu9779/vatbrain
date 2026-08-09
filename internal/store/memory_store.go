@@ -114,6 +114,7 @@ type MemoryStore interface {
 	UpdatePitfallWeight(ctx context.Context, id uuid.UUID, weight float64) error
 	UpdatePitfallStatus(ctx context.Context, id uuid.UUID, status models.PitfallStatus) error
 	AddPitfallCounters(ctx context.Context, id uuid.UUID, shownDelta, suppressedDelta int) error
+	ApplyPitfallFeedback(ctx context.Context, id uuid.UUID, action models.PitfallFeedbackAction, now time.Time) error
 	MarkPitfallObsolete(ctx context.Context, id uuid.UUID, at time.Time) error
 
 	// SearchPitfallByEntity finds all Pitfalls anchored on a specific entity.

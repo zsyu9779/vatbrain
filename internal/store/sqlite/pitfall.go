@@ -48,8 +48,9 @@ func (s *Store) WritePitfall(_ context.Context, p *models.PitfallMemory) error {
 			 was_user_corrected, occurrence_count, last_occurred_at,
 			 source_type, trust_level, weight,
 			 created_at, updated_at, obsoleted_at,
-			 source_episodic_ids, status, times_shown, times_suppressed)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 source_episodic_ids, status, times_shown, times_suppressed,
+		 times_adopted, protection_level)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		p.ID.String(),
 		p.EntityID,
@@ -73,6 +74,8 @@ func (s *Store) WritePitfall(_ context.Context, p *models.PitfallMemory) error {
 		string(p.Status.Normalize()),
 		p.TimesShown,
 		p.TimesSuppressed,
+		p.TimesAdopted,
+		p.ProtectionLevel,
 	)
 	return err
 }
@@ -102,6 +105,48 @@ func (s *Store) AddPitfallCounters(_ context.Context, id uuid.UUID, shownDelta, 
 	return err
 }
 
+// ApplyPitfallFeedback applies a v0.3 feedback-loop signal: adopted → weight
+// up + TimesAdopted++; ignored → weight down; recurred → protection level up
+// (and slight weight up — recurrence proves the pitfall matters).
+func (s *Store) ApplyPitfallFeedback(_ context.Context, id uuid.UUID,
+	action models.PitfallFeedbackAction, now time.Time) error {
+	if !action.IsValid() {
+		return fmt.Errorf("invalid pitfall feedback action %q", action)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delta := action.WeightDelta()
+	switch action {
+	case models.PitfallFeedbackRecurred:
+		_, err := s.db.Exec(`
+			UPDATE pitfall_memories
+			SET weight = MIN(1.0, MAX(0.0, weight + ?)),
+			    protection_level = MIN(?, protection_level + 1),
+			    updated_at = ?
+			WHERE id = ?`,
+			delta, models.PitfallProtectionLevelMax, now.UTC().Format(time.RFC3339), id.String())
+		return err
+	case models.PitfallFeedbackAdopted:
+		_, err := s.db.Exec(`
+			UPDATE pitfall_memories
+			SET weight = MIN(1.0, MAX(0.0, weight + ?)),
+			    times_adopted = times_adopted + 1,
+			    updated_at = ?
+			WHERE id = ?`,
+			delta, now.UTC().Format(time.RFC3339), id.String())
+		return err
+	default: // ignored
+		_, err := s.db.Exec(`
+			UPDATE pitfall_memories
+			SET weight = MIN(1.0, MAX(0.0, weight + ?)),
+			    updated_at = ?
+			WHERE id = ?`,
+			delta, now.UTC().Format(time.RFC3339), id.String())
+		return err
+	}
+}
+
 // GetPitfall retrieves a single pitfall memory by ID.
 func (s *Store) GetPitfall(_ context.Context, id uuid.UUID) (*models.PitfallMemory, error) {
 	s.mu.Lock()
@@ -113,7 +158,8 @@ func (s *Store) GetPitfall(_ context.Context, id uuid.UUID) (*models.PitfallMemo
 		       was_user_corrected, occurrence_count, last_occurred_at,
 		       source_type, trust_level, weight,
 		       created_at, updated_at, obsoleted_at,
-		       source_episodic_ids, status, times_shown, times_suppressed
+		       source_episodic_ids, status, times_shown, times_suppressed,
+		       times_adopted, protection_level
 		FROM pitfall_memories WHERE id = ?
 	`, id.String())
 
@@ -157,7 +203,8 @@ func (s *Store) SearchPitfall(_ context.Context, req store.PitfallSearchRequest)
 		       was_user_corrected, occurrence_count, last_occurred_at,
 		       source_type, trust_level, weight,
 		       created_at, updated_at, obsoleted_at,
-		       source_episodic_ids, status, times_shown, times_suppressed
+		       source_episodic_ids, status, times_shown, times_suppressed,
+		       times_adopted, protection_level
 		FROM pitfall_memories
 		%s
 		ORDER BY weight DESC
@@ -212,7 +259,8 @@ func (s *Store) SearchPitfallByEntity(_ context.Context, entityID, projectID str
 		       was_user_corrected, occurrence_count, last_occurred_at,
 		       source_type, trust_level, weight,
 		       created_at, updated_at, obsoleted_at,
-		       source_episodic_ids, status, times_shown, times_suppressed
+		       source_episodic_ids, status, times_shown, times_suppressed,
+		       times_adopted, protection_level
 		FROM pitfall_memories
 		WHERE entity_id = ? AND project_id = ? AND obsoleted_at IS NULL
 		ORDER BY weight DESC
@@ -292,6 +340,7 @@ func scanPitfallRow(scanner interface{ Scan(dest ...any) error }) (*models.Pitfa
 		&sourceTypeStr, &p.TrustLevel, &p.Weight,
 		&createdAtStr, &updatedAtStr, &obsoletedStr,
 		&srcIDsStr, &statusStr, &p.TimesShown, &p.TimesSuppressed,
+		&p.TimesAdopted, &p.ProtectionLevel,
 	)
 	if err != nil {
 		return nil, err

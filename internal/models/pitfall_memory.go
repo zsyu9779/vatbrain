@@ -39,6 +39,51 @@ type PitfallMemory struct {
 	// TimesSuppressed / max(1, TimesShown) (EVOLUTION_PLAN v0.2.2).
 	TimesShown       int `json:"times_shown"`
 	TimesSuppressed  int `json:"times_suppressed"`
+	// TimesAdopted counts adoptions (agent used the fix and it worked) —
+	// the numerator of the useful-injection-rate metric (EVOLUTION_PLAN).
+	TimesAdopted int `json:"times_adopted"`
+	// ProtectionLevel is the v0.3 feedback-loop escalation: when the same
+	// error recurs, the pitfall's protection rises (0..ProtectionLevelMax).
+	// Higher protection slows weight decay and raises overwrite difficulty.
+	ProtectionLevel int `json:"protection_level"`
+}
+
+// PitfallProtectionLevelMax caps the protection escalation ladder.
+const PitfallProtectionLevelMax = 3
+
+// PitfallFeedbackAction is the v0.3 feedback-loop signal (Capture Feedback).
+type PitfallFeedbackAction string
+
+const (
+	// PitfallFeedbackAdopted: agent adopted the fix and tests passed → weight up.
+	PitfallFeedbackAdopted PitfallFeedbackAction = "adopted"
+	// PitfallFeedbackIgnored: agent/user ignored the injection → weight down.
+	PitfallFeedbackIgnored PitfallFeedbackAction = "ignored"
+	// PitfallFeedbackRecurred: the same error happened again → protection up.
+	PitfallFeedbackRecurred PitfallFeedbackAction = "recurred"
+)
+
+// IsValid reports whether the feedback action is known.
+func (a PitfallFeedbackAction) IsValid() bool {
+	switch a {
+	case PitfallFeedbackAdopted, PitfallFeedbackIgnored, PitfallFeedbackRecurred:
+		return true
+	}
+	return false
+}
+
+// WeightDelta returns the signed weight change for a feedback action
+// (v0.3 反馈闭环：采纳 +0.1 / 忽略 -0.1 / 复发 +0.05 且保护级别 +1).
+func (a PitfallFeedbackAction) WeightDelta() float64 {
+	switch a {
+	case PitfallFeedbackAdopted:
+		return +0.1
+	case PitfallFeedbackIgnored:
+		return -0.1
+	case PitfallFeedbackRecurred:
+		return +0.05
+	}
+	return 0
 }
 
 // PitfallStatus is the Pitfall Workbench lifecycle state.

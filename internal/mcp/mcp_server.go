@@ -39,6 +39,7 @@ func RegisteredTools(a *app.App) []server.ServerTool {
 		confirmPitfallTool(a),
 		suppressPitfallTool(a),
 		linkPitfallEntityTool(a),
+		feedbackPitfallTool(a),
 		// v0.3 Proactive Risk Injection
 		prepareEditContextTool(a),
 	}

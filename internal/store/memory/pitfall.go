@@ -158,6 +158,43 @@ func (s *Store) AddPitfallCounters(_ context.Context, id uuid.UUID, shownDelta, 
 	return nil
 }
 
+// ApplyPitfallFeedback applies a v0.3 feedback-loop signal.
+func (s *Store) ApplyPitfallFeedback(_ context.Context, id uuid.UUID,
+	action models.PitfallFeedbackAction, now time.Time) error {
+	if !action.IsValid() {
+		return fmt.Errorf("invalid pitfall feedback action %q", action)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pitfalls[id]
+	if !ok {
+		return fmt.Errorf("%w: %s", models.ErrPitfallNotFound, id)
+	}
+	p.Weight = clamp01(p.Weight + action.WeightDelta())
+	switch action {
+	case models.PitfallFeedbackAdopted:
+		p.TimesAdopted++
+	case models.PitfallFeedbackRecurred:
+		p.ProtectionLevel++
+		if p.ProtectionLevel > models.PitfallProtectionLevelMax {
+			p.ProtectionLevel = models.PitfallProtectionLevelMax
+		}
+	}
+	p.UpdatedAt = now.UTC()
+	return nil
+}
+
+// clamp01 bounds a value to [0,1].
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
 // MarkPitfallObsolete marks a pitfall memory as obsolete.
 func (s *Store) MarkPitfallObsolete(_ context.Context, id uuid.UUID, at time.Time) error {
 	s.mu.Lock()

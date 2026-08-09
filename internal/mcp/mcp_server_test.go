@@ -64,6 +64,7 @@ func TestMCPServer_ToolRegistration(t *testing.T) {
 		"confirm_pitfall",
 		"suppress_pitfall",
 		"link_pitfall_entity",
+		"feedback_pitfall",
 		// v0.3 Proactive Risk Injection
 		"prepare_edit_context",
 	}

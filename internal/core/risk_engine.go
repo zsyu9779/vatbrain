@@ -122,3 +122,35 @@ func reasonList(reasons map[string]bool) []string {
 	sort.Strings(out)
 	return out
 }
+
+// protectionDecayRate returns the decay-rate multiplier for a protection
+// level. Protection slows decay: each level halves the decay rate (level 0 =
+// full decay, level 3 = 1/8×), so escalated pitfalls fade far slower
+// (DESIGN_PRINCIPLES §6.3 / v0.3 反馈闭环「保护级别」).
+func protectionDecayRate(level int) float64 {
+	if level <= 0 {
+		return 1.0
+	}
+	if level > models.PitfallProtectionLevelMax {
+		level = models.PitfallProtectionLevelMax
+	}
+	return 1.0 / math.Pow(2, float64(level))
+}
+
+// ProtectionDecayedWeight applies time decay to a pitfall weight, slowed by
+// its protection level. days is the time since the last occurrence.
+func ProtectionDecayedWeight(base float64, protectionLevel int, days float64) float64 {
+	if days <= 0 {
+		return base
+	}
+	// Exponential decay scaled by the protection multiplier (halflife 30d).
+	decay := math.Exp(-days / pitfallTimeDecayDays * protectionDecayRate(protectionLevel))
+	w := base * decay
+	if w < 0 {
+		return 0
+	}
+	if w > 1 {
+		return 1
+	}
+	return w
+}

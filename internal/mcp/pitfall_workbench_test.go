@@ -147,6 +147,62 @@ func TestExplainPitfall_TraceableSource(t *testing.T) {
 	assert.Contains(t, out.Signature, "v3.py")
 }
 
+func TestFeedbackPitfall_Adopted_IncreasesWeightAndAdopted(t *testing.T) {
+	a := minimalApp()
+	p := seedPitfall(t, a, models.PitfallConfirmed)
+	// 先降到 0.5 以便观察 adopted 的 +0.1（权重上限 1.0）
+	require.NoError(t, a.Store.UpdatePitfallWeight(context.Background(), p.ID, 0.5))
+
+	srv, err := mcptest.NewServer(t, vatmcp.RegisteredTools(a)...)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	callTool(t, srv, "feedback_pitfall", map[string]any{
+		"pitfall_id": p.ID.String(), "action": "adopted",
+	})
+
+	got, err := a.Store.GetPitfall(context.Background(), p.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.6, got.Weight, 1e-9, "adopted 应提高权重 +0.1")
+	assert.Equal(t, 1, got.TimesAdopted)
+}
+
+func TestFeedbackPitfall_Recurred_EscalatesProtection(t *testing.T) {
+	a := minimalApp()
+	p := seedPitfall(t, a, models.PitfallConfirmed)
+
+	srv, err := mcptest.NewServer(t, vatmcp.RegisteredTools(a)...)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	callTool(t, srv, "feedback_pitfall", map[string]any{
+		"pitfall_id": p.ID.String(), "action": "recurred",
+	})
+
+	got, err := a.Store.GetPitfall(context.Background(), p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, got.ProtectionLevel, "复发应提升保护级别")
+	assert.True(t, got.Injectable(), "复发 pitfall 仍应可注入（它确实重要）")
+}
+
+func TestFeedbackPitfall_Ignored_LowersWeight(t *testing.T) {
+	a := minimalApp()
+	p := seedPitfall(t, a, models.PitfallConfirmed)
+	original, _ := a.Store.GetPitfall(context.Background(), p.ID)
+
+	srv, err := mcptest.NewServer(t, vatmcp.RegisteredTools(a)...)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	callTool(t, srv, "feedback_pitfall", map[string]any{
+		"pitfall_id": p.ID.String(), "action": "ignored",
+	})
+
+	got, err := a.Store.GetPitfall(context.Background(), p.ID)
+	require.NoError(t, err)
+	assert.Less(t, got.Weight, original.Weight, "ignored 应降低权重")
+}
+
 func TestPrepareEditContext_ReturnsRiskAndPitfalls(t *testing.T) {
 	a := minimalApp()
 	ctx := context.Background()
