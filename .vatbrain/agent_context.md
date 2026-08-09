@@ -4,9 +4,10 @@
 
 ## 项目状态
 
-- **阶段**: Hermes 集成 **Phase 1-6 全部完成并推送** ✅
+- **阶段**: Hermes 集成 **Phase 1-6 全部完成并已合并到 main** ✅
 - **语言**: Go (go 1.25.5) + Python（hermes 插件）
-- **分支**: `feature/agent-memory-watcher`（工作树干净，origin 同步）
+- **分支**: `feature/agent-memory-watcher` 已合并（快进）并删除本地分支；当前在 `main`（已推送，117 文件 +15,679 行）
+- **远端**: `origin/feature/agent-memory-watcher` 仍存在（已合并，可删）
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点
 - **hermes 源码**: 本机 `~/.hermes/hermes-agent`（HEAD 52920747e，工作树干净）
 - **hermes 插件**: 已安装 `~/.hermes/plugins/vatbrain/` + daemon 二进制 `~/.hermes/vatbrain/bin/vatbrain-provider`
@@ -127,6 +128,7 @@
 - **剩余构想已盘点并整理为 GitHub Issue**：`https://github.com/zsyu9779/vatbrain/issues/1`（P0-P3 分层，含建议执行顺序）
 - P0 建议先做：v0.4 Public DX（README 定位 + DEMO_SCRIPT + COMPETITIVE_LANDSCAPE）→ v0.3 反馈闭环 → Watcher GA 收尾（opencode adapter / list_adapters new_count/skipped_count / e2e demo）
 - Hermes 集成全部完成并已激活（用户授权 config.yaml memory.provider: vatbrain）
+- 后续工作应在新建 feature 分支上开展（main 为集成分支）；可选清理 `origin/feature/agent-memory-watcher` 远端分支
 
 ## 已知问题
 
