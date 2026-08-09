@@ -59,7 +59,9 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 		limit = 10
 	}
 	fetchLimit := limit
-	if req.Embedding != nil {
+	if req.Embedding != nil || req.SurpriseBoost > 0 {
+		// Surprise-boosted ranking happens in Go (the SQL ORDER BY only sees
+		// the stored weight), so fetch a wider pool and re-rank locally.
 		fetchLimit = limit * 5
 		if fetchLimit > 500 {
 			fetchLimit = 500
@@ -69,7 +71,7 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 	query := fmt.Sprintf(`
 		SELECT id, project_id, language, task_type, summary, source_type,
 		       trust_level, weight, effective_frequency, entity_group,
-		       context_vector, full_snapshot_uri, is_correction,
+		       context_vector, full_snapshot_uri, is_correction, surprise_score,
 		       created_at, last_accessed_at, obsoleted_at
 		FROM episodic_memories
 		WHERE %s
@@ -101,14 +103,38 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 			if len(emb) != len(req.Embedding) {
 				continue
 			}
+			sim := vector.CosineSimilarity(req.Embedding, emb)
+			// Surprise boost promotes high-surprise memories above otherwise
+			// equal peers without disturbing pure-cosine ordering.
+			if req.SurpriseBoost > 0 {
+				sim *= 1 + req.SurpriseBoost*m.SurpriseScore
+			}
 			ranked = append(ranked, scoredEpisodic{
 				mem:   m,
-				score: vector.CosineSimilarity(req.Embedding, emb),
+				score: sim,
 			})
 		}
 
 		sortScoredEpisodics(ranked)
 
+		if limit > len(ranked) {
+			limit = len(ranked)
+		}
+		results = make([]models.EpisodicMemory, limit)
+		for i := range limit {
+			results[i] = ranked[i].mem
+		}
+	} else if req.SurpriseBoost > 0 {
+		// Weighted surprise ranking: order by weight × surprise factor so
+		// prediction-error memories surface above otherwise-equal peers.
+		var ranked []scoredEpisodic
+		for _, m := range candidates {
+			ranked = append(ranked, scoredEpisodic{
+				mem:   m,
+				score: m.Weight * (1 + req.SurpriseBoost*m.SurpriseScore),
+			})
+		}
+		sortScoredEpisodics(ranked)
 		if limit > len(ranked) {
 			limit = len(ranked)
 		}
@@ -157,7 +183,7 @@ func (s *Store) SearchSemantic(_ context.Context, req store.SemanticSearchReques
 	query := fmt.Sprintf(`
 		SELECT id, type, content, source_type, trust_level, weight,
 		       effective_frequency, entity_group, consolidation_run_id,
-		       backtest_accuracy, source_episodic_ids,
+		       backtest_accuracy, source_episodic_ids, surprise_score,
 		       created_at, last_accessed_at, obsoleted_at
 		FROM semantic_memories
 		WHERE %s

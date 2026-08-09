@@ -24,6 +24,10 @@ type SemanticMemory struct {
 	ConsolidationRunID string      `json:"consolidation_run_id"`
 	BacktestAccuracy   float64     `json:"backtest_accuracy"`
 	SourceEpisodicIDs  []uuid.UUID `json:"source_episodic_ids"`
+	// SurpriseScore inherits the surprise signal from the episodic sources a
+	// rule was distilled from. Rules distilled from surprising episodes are
+	// protected from decay the same way the episodes themselves are.
+	SurpriseScore float64 `json:"surprise_score"`
 }
 
 // DependsOnEdge represents a [:DEPENDS_ON] relationship between semantic memories.

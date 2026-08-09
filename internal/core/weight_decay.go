@@ -21,6 +21,11 @@ type WeightDecayEngine struct {
 	AlphaExperience  float64 // slow decay from creation time (default 0.005)
 	BetaActivity     float64 // fast decay from last access (default 0.05)
 	CoolingThreshold float64 // weight below which memory is "cold" (default 0.01)
+	// SurpriseHalfLifeBoost scales the decay half-life for high-surprise
+	// memories (DESIGN_PRINCIPLES §12). A score of s stretches both decay
+	// exponents by 1/(1 + SurpriseHalfLifeBoost·s), so with the default 2.0 a
+	// fully surprising memory (s = 1) keeps a 3× half-life.
+	SurpriseHalfLifeBoost float64
 }
 
 // DefaultWeightDecayEngine returns a WeightDecayEngine with tuned defaults.
@@ -31,12 +36,14 @@ type WeightDecayEngine struct {
 //	alpha = 0.005       → "experience richness" halves after ~140 days (slow, long-term)
 //	beta  = 0.05        → "activity" halves after ~14 days without access (faster)
 //	cooling_threshold = 0.01 → below this the memory moves to cold storage
+//	surprise_half_life_boost = 2.0 → surprise=1 memory keeps up to 3× half-life
 func DefaultWeightDecayEngine() *WeightDecayEngine {
 	return &WeightDecayEngine{
-		LambdaDecay:      0.1,
-		AlphaExperience:  0.005,
-		BetaActivity:     0.05,
-		CoolingThreshold: 0.01,
+		LambdaDecay:            0.1,
+		AlphaExperience:        0.005,
+		BetaActivity:           0.05,
+		CoolingThreshold:       0.01,
+		SurpriseHalfLifeBoost:  2.0,
 	}
 }
 
@@ -68,6 +75,45 @@ func (e *WeightDecayEngine) Weight(
 // IsCooled reports whether the weight has dropped below the cooling threshold.
 func (e *WeightDecayEngine) IsCooled(weight float64) bool {
 	return weight < e.CoolingThreshold
+}
+
+// SurpriseDecayScale returns the half-life stretch factor for a surprise score
+// in [0, 1]: 1/(1 + SurpriseHalfLifeBoost·surprise). surprise=0 yields 1 (no
+// change); with the default boost a surprise=1 memory decays at one-third the
+// rate — a 3× half-life. The scale never exceeds 1 and is always positive.
+func (e *WeightDecayEngine) SurpriseDecayScale(surprise float64) float64 {
+	boost := e.SurpriseHalfLifeBoost
+	if boost <= 0 {
+		boost = 2.0
+	}
+	if surprise <= 0 {
+		return 1
+	}
+	if surprise > 1 {
+		surprise = 1
+	}
+	scale := 1 / (1 + boost*surprise)
+	if scale > 1 {
+		return 1
+	}
+	return scale
+}
+
+// WeightWithSurprise is the surprise-aware counterpart of Weight. A positive
+// surprise score stretches both decay exponents by SurpriseDecayScale, so a
+// memory that broke an expectation cools far slower than an equally-aged,
+// equally-used ordinary one.
+func (e *WeightDecayEngine) WeightWithSurprise(
+	effectiveFrequency float64,
+	createdAt time.Time,
+	lastAccessedAt time.Time,
+	now time.Time,
+	surprise float64,
+) float64 {
+	scale := e.SurpriseDecayScale(surprise)
+	experienceDecay := math.Exp(-e.AlphaExperience * daysBetween(createdAt, now) * scale)
+	activityDecay := math.Exp(-e.BetaActivity * daysBetween(lastAccessedAt, now) * scale)
+	return effectiveFrequency * experienceDecay * activityDecay
 }
 
 // ComputeFull is a convenience method that runs the full pipeline:

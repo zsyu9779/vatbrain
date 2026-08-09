@@ -26,6 +26,12 @@ type EpisodicSearchRequest struct {
 	// Embedding is the query vector for semantic similarity search.
 	// Set by the caller (engine/embedder). Nil means pure structured query.
 	Embedding []float64
+
+	// SurpriseBoost, when > 0, multiplies each candidate's ranking weight by
+	// (1 + SurpriseBoost × surprise_score), promoting high-surprise memories
+	// above otherwise-equal peers. 0 (default) leaves ranking unchanged, so
+	// existing callers see identical behavior.
+	SurpriseBoost float64
 }
 
 // SemanticSearchRequest carries filters and an optional embedding for semantic

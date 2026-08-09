@@ -30,6 +30,11 @@ type EpisodicMemory struct {
 	// information (prediction-error signal). Persisted so corrections are
 	// observable in the graph, not just used by the significance gate.
 	IsCorrection bool `json:"is_correction"`
+	// SurpriseScore is the prediction-error signal (DESIGN_PRINCIPLES §12),
+	// computed independently of the regular weight. High-surprise events
+	// retain a longer half-life on the decay curve, up to
+	// (1 + SurpriseHalfLifeBoost × surprise) times. Range [0, 1].
+	SurpriseScore float64 `json:"surprise_score"`
 }
 
 // PrecedesEdge represents a [:PRECEDES] relationship between episodic memories.

@@ -88,9 +88,9 @@ func (s *Store) WriteEpisodic(_ context.Context, mem *models.EpisodicMemory) err
 		INSERT OR REPLACE INTO episodic_memories
 			(id, project_id, language, task_type, summary, source_type,
 			 trust_level, weight, effective_frequency, entity_group,
-			 context_vector, full_snapshot_uri, is_correction,
+			 context_vector, full_snapshot_uri, is_correction, surprise_score,
 			 created_at, last_accessed_at, obsoleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		mem.ID.String(),
 		mem.ProjectID,
@@ -105,6 +105,7 @@ func (s *Store) WriteEpisodic(_ context.Context, mem *models.EpisodicMemory) err
 		cvBlob,
 		mem.FullSnapshotURI,
 		isCorrection,
+		mem.SurpriseScore,
 		mem.CreatedAt.UTC().Format(time.RFC3339),
 		la.UTC().Format(time.RFC3339),
 		obsoleted,
@@ -120,7 +121,7 @@ func (s *Store) GetEpisodic(_ context.Context, id uuid.UUID) (*models.EpisodicMe
 	row := s.db.QueryRow(`
 		SELECT id, project_id, language, task_type, summary, source_type,
 		       trust_level, weight, effective_frequency, entity_group,
-		       context_vector, full_snapshot_uri, is_correction,
+		       context_vector, full_snapshot_uri, is_correction, surprise_score,
 		       created_at, last_accessed_at, obsoleted_at
 		FROM episodic_memories WHERE id = ?
 	`, id.String())
@@ -176,9 +177,9 @@ func (s *Store) WriteSemantic(_ context.Context, mem *models.SemanticMemory) err
 		INSERT OR REPLACE INTO semantic_memories
 			(id, type, content, source_type, trust_level, weight,
 			 effective_frequency, entity_group, consolidation_run_id,
-			 backtest_accuracy, source_episodic_ids,
+			 backtest_accuracy, source_episodic_ids, surprise_score,
 			 created_at, last_accessed_at, obsoleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		mem.ID.String(),
 		string(mem.Type),
@@ -191,6 +192,7 @@ func (s *Store) WriteSemantic(_ context.Context, mem *models.SemanticMemory) err
 		mem.ConsolidationRunID,
 		mem.BacktestAccuracy,
 		string(srcIDs),
+		mem.SurpriseScore,
 		mem.CreatedAt.UTC().Format(time.RFC3339),
 		la.UTC().Format(time.RFC3339),
 		obsoleted,
@@ -206,7 +208,7 @@ func (s *Store) GetSemantic(_ context.Context, id uuid.UUID) (*models.SemanticMe
 	row := s.db.QueryRow(`
 		SELECT id, type, content, source_type, trust_level, weight,
 		       effective_frequency, entity_group, consolidation_run_id,
-		       backtest_accuracy, source_episodic_ids,
+		       backtest_accuracy, source_episodic_ids, surprise_score,
 		       created_at, last_accessed_at, obsoleted_at
 		FROM semantic_memories WHERE id = ?
 	`, id.String())
@@ -416,7 +418,7 @@ func scanEpisodic(row *sql.Row) (*models.EpisodicMemory, error) {
 	err := row.Scan(
 		&idStr, &m.ProjectID, &m.Language, &taskTypeStr, &m.Summary, &sourceTypeStr,
 		&m.TrustLevel, &m.Weight, &m.EffectiveFrequency, &m.EntityGroup,
-		&cvBlob, &m.FullSnapshotURI, &isCorrection,
+		&cvBlob, &m.FullSnapshotURI, &isCorrection, &m.SurpriseScore,
 		&createdAtStr, &laStr, &obsoletedStr,
 	)
 	if err != nil {
@@ -451,7 +453,7 @@ func scanSemantic(row *sql.Row) (*models.SemanticMemory, error) {
 	err := row.Scan(
 		&idStr, &typeStr, &m.Content, &sourceTypeStr, &m.TrustLevel, &m.Weight,
 		&m.EffectiveFrequency, &m.EntityGroup, &m.ConsolidationRunID,
-		&m.BacktestAccuracy, &srcIDsStr,
+		&m.BacktestAccuracy, &srcIDsStr, &m.SurpriseScore,
 		&createdAtStr, &laStr, &obsoletedStr,
 	)
 	if err != nil {
@@ -488,7 +490,7 @@ func scanEpisodicRows(rows *sql.Rows) ([]models.EpisodicMemory, error) {
 		err := rows.Scan(
 			&idStr, &m.ProjectID, &m.Language, &taskTypeStr, &m.Summary, &sourceTypeStr,
 			&m.TrustLevel, &m.Weight, &m.EffectiveFrequency, &m.EntityGroup,
-			&cvBlob, &m.FullSnapshotURI, &isCorrection,
+			&cvBlob, &m.FullSnapshotURI, &isCorrection, &m.SurpriseScore,
 			&createdAtStr, &laStr, &obsoletedStr,
 		)
 		if err != nil {
@@ -526,7 +528,7 @@ func scanSemanticRows(rows *sql.Rows) ([]models.SemanticMemory, error) {
 		err := rows.Scan(
 			&idStr, &typeStr, &m.Content, &sourceTypeStr, &m.TrustLevel, &m.Weight,
 			&m.EffectiveFrequency, &m.EntityGroup, &m.ConsolidationRunID,
-			&m.BacktestAccuracy, &srcIDsStr,
+			&m.BacktestAccuracy, &srcIDsStr, &m.SurpriseScore,
 			&createdAtStr, &laStr, &obsoletedStr,
 		)
 		if err != nil {

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS episodic_memories (
     context_vector BLOB DEFAULT NULL,
     full_snapshot_uri TEXT DEFAULT '',
     is_correction INTEGER DEFAULT 0,
+    surprise_score REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     last_accessed_at TEXT,
     obsoleted_at TEXT
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS semantic_memories (
     backtest_accuracy REAL DEFAULT 0.0,
     source_episodic_ids TEXT DEFAULT '',
     context_vector BLOB DEFAULT NULL,
+    surprise_score REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     last_accessed_at TEXT,
     obsoleted_at TEXT
@@ -149,6 +151,18 @@ func migrate(db *sql.DB) error {
 		if _, err := db.Exec("ALTER TABLE pitfall_memories ADD COLUMN " + col); err != nil &&
 			!isDuplicateColumnErr(err) {
 			return fmt.Errorf("sqlite migrate pitfall %s: %w", col, err)
+		}
+	}
+
+	// v0.3 Surprise Score (prediction-error signal): independent dimension that
+	// extends the half-life of memories that broke an expectation.
+	for table, col := range map[string]string{
+		"episodic_memories": "surprise_score REAL NOT NULL DEFAULT 0",
+		"semantic_memories": "surprise_score REAL NOT NULL DEFAULT 0",
+	} {
+		if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN " + col); err != nil &&
+			!isDuplicateColumnErr(err) {
+			return fmt.Errorf("sqlite migrate %s surprise_score: %w", table, err)
 		}
 	}
 

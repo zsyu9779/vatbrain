@@ -36,6 +36,10 @@ type WriteDeps struct {
 	PatternSep  *PatternSeparation
 	WeightDecay *WeightDecayEngine
 	Embedder    embedder.Embedder
+	// Surprise scores the prediction-error signal (§12) for persisted events.
+	// May be nil, in which case a DefaultSurpriseScorer is used. The score is
+	// stored on the memory so surprise-aware decay/ranking can read it later.
+	Surprise *SurpriseScorer
 	// WorkingMem accumulates accepted summaries for cross-cycle persistence.
 	// May be nil, in which case cross-cycle gating sees an empty buffer.
 	WorkingMem *store.WorkingMemoryBuffer
@@ -86,6 +90,13 @@ func WriteMemory(ctx context.Context, deps WriteDeps, event WriteEvent,
 			GateReason: gateResult.Reason,
 		}, nil
 	}
+
+	// Score the prediction-error signal (independent of the gate decision).
+	scorer := deps.Surprise
+	if scorer == nil {
+		scorer = DefaultSurpriseScorer()
+	}
+	surprise := scorer.Score(event)
 
 	// Generate embedding.
 	embedding, err := deps.Embedder.Embed(ctx, event.Summary)
@@ -143,6 +154,9 @@ func WriteMemory(ctx context.Context, deps WriteDeps, event WriteEvent,
 		if event.IsCorrection {
 			existing.IsCorrection = true
 		}
+		if surprise > existing.SurpriseScore {
+			existing.SurpriseScore = surprise
+		}
 
 		if uErr := deps.Store.WriteEpisodic(ctx, existing); uErr != nil {
 			return WriteResult{}, fmt.Errorf("%w: %v", errWritePipelinePersist, uErr)
@@ -176,6 +190,7 @@ func WriteMemory(ctx context.Context, deps WriteDeps, event WriteEvent,
 		EntityGroup:        entityID,
 		ContextVector:      embedding,
 		IsCorrection:       event.IsCorrection,
+		SurpriseScore:      surprise,
 	}
 
 	if err := deps.Store.WriteEpisodic(ctx, mem); err != nil {

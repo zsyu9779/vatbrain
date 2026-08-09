@@ -105,11 +105,18 @@ func (re *ReconsolidationEngine) processEpisodic(
 	// Touch to update last_accessed_at.
 	_ = s.TouchEpisodic(ctx, ep.ID, now)
 
-	// Trust boost for user corrections.
-	if isUserCorrected && ep.TrustLevel < 5 {
-		ep.TrustLevel++
+	// Trust boost for user corrections. A corrected memory is itself a
+	// prediction-error signal (§12): record the surprise so it is protected
+	// from decay and surfaces in surprise-aware retrieval.
+	if isUserCorrected {
+		if ep.TrustLevel < 5 {
+			ep.TrustLevel++
+		}
+		if ep.SurpriseScore < 0.7 {
+			ep.SurpriseScore = 0.7
+		}
 		ep.Weight = newWeight
-		_ = s.WriteEpisodic(ctx, ep) // best-effort trust update
+		_ = s.WriteEpisodic(ctx, ep) // best-effort trust/surprise update
 	}
 
 	return &ReconsolidationResult{

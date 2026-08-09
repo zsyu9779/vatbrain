@@ -21,6 +21,11 @@ const (
 	episodicResultLimit   = 5
 	pitfallCandidatePool  = 50
 	pitfallResultLimit    = 3
+	// surpriseRankingBoost is a conservative SurpriseBoost applied on the live
+	// recall path: it keeps ordering predominantly semantic while letting a
+	// high-surprise memory (a past correction) edge out an otherwise-equal
+	// peer. 0 would disable the prediction-error signal from ranking entirely.
+	surpriseRankingBoost = 0.25
 )
 
 // entityRefRe finds code-entity references in a query (mirrors the refiner's
@@ -47,9 +52,10 @@ func RetrieveEpisodic(ctx context.Context, deps core.WriteDeps, projectID, query
 	emb, err := deps.Embedder.Embed(ctx, query)
 	if err == nil && hasVectorMagnitude(emb) {
 		return deps.Store.SearchEpisodic(ctx, store.EpisodicSearchRequest{
-			ProjectID: projectID,
-			Embedding: vector.Float32To64(emb),
-			Limit:     limit,
+			ProjectID:     projectID,
+			Embedding:     vector.Float32To64(emb),
+			Limit:         limit,
+			SurpriseBoost: surpriseRankingBoost,
 		})
 	}
 
