@@ -25,7 +25,10 @@
   2. **SignificanceGate 挡掉所有首次写入**：单会话单任务协议下 4 门控全不满足（"遗忘是默认" 假设长会话跨周期重复）→ gate off 是主测量，**gate-on 在此协议的代价本身就是重要结论**。
   3. 短会话 async sync_turn 写入实测能存活（local SQLite 快），无需改插件。
 - **Smoke 结果**（reasoning 域，train 2 题 + test 2 题）：train pass@1=0.50、**test pass@1=1.00**；lifecycle clear/backup/restore 全 0；backup 39.3K；DB 记忆写入 6 条。
-- **验证**：hermes 会话不落 jsonl（存 state.db）→ collect_session 返回 0 统计（不影响 verifier 出分）。
+- **Baseline 对比**（同 2 道 test 题，`hermes-baseline` home 无记忆）：baseline pass@1=0.50（omni_2080 错/omni_2185 对），vatbrain 1.00（全对）→ **omni_2080 从错到对**。n=2 仅示方向。报告：`docs/v0.3/08-agent-benchmark-smoke-results.md`。
+- **验证**：recall 链路直连测试通过（语义 embedding 下 prefetch 返回训练记忆 2476 字符）；hermes 会话不落 jsonl（存 state.db）→ collect_session 返回 0 统计（不影响 verifier 出分）。
+- **用户决策（2026-08-10）**：hermes agent 模型**保持 MiniMax-M3**（便宜），不换 deepseek。
+- **记忆质量观察**：任务记忆=完整 prompt（价值低）；**feedback 记忆=含 expected answer 的丰富知识（主要跨任务价值）**。
 
 ## 最近工作（2026-08-10）— OmniMemEval 时序修复：chat_time 日期前缀
 
