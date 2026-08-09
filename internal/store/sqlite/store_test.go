@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -155,6 +156,35 @@ func TestSQLite_SearchEpisodic_WithEmbedding(t *testing.T) {
 	assert.Equal(t, m1.ID, results[0].ID)
 	assert.Equal(t, m3.ID, results[1].ID)
 	assert.Equal(t, m2.ID, results[2].ID)
+}
+
+func TestSQLite_SearchEpisodic_EmbeddingPoolIncludesAll(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// 550 near-uniform memories + 1 distinctive fact, all with the same weight
+	// — the old SQL weight pre-limit (pool 500) could skip the distinctive row
+	// entirely, pinning pinpoint-fact recall. The embedding pool must rank the
+	// full project candidate set.
+	const distractors = 550
+	for i := 0; i < distractors; i++ {
+		m := makeEpisodic("p", "go", "debug", fmt.Sprintf("distractor %d", i))
+		m.ContextVector = []float32{0, 1, 0}
+		require.NoError(t, s.WriteEpisodic(ctx, m))
+	}
+	fact := makeEpisodic("p", "go", "debug", "the golden banana pendant")
+	fact.ContextVector = []float32{1, 0, 0}
+	require.NoError(t, s.WriteEpisodic(ctx, fact))
+
+	results, err := s.SearchEpisodic(ctx, store.EpisodicSearchRequest{
+		ProjectID: "p",
+		Embedding: []float64{1, 0, 0},
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	assert.Equal(t, fact.ID, results[0].ID,
+		"distinctive memory must rank top even beyond the old 500-pool")
 }
 
 func TestSQLite_SearchEpisodic_NoEmbedding(t *testing.T) {

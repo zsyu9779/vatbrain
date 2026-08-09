@@ -107,6 +107,14 @@ func run() error {
 	}
 	defer a.Close()
 
+	// Log the active semantic embedder so a run that forgot to source the
+	// embedding credentials (VATBRAIN_EMBEDDER_*) does not silently fall back
+	// to the keyword embedder — mixing vector spaces ruins retrieval.
+	slog.Info("vatbrain-bench embedder",
+		"semantic_provider", os.Getenv("VATBRAIN_EMBEDDER_SEMANTIC_PROVIDER"),
+		"semantic_model", os.Getenv("VATBRAIN_EMBEDDER_SEMANTIC_MODEL"),
+	)
+
 	deps := core.WriteDeps{
 		Store:       a.Store,
 		Gate:        a.SignificanceGate,
@@ -114,6 +122,10 @@ func run() error {
 		WeightDecay: a.WeightDecay,
 		Embedder:    a.Embedder,
 		WorkingMem:  a.WorkingMemory,
+		// The benchmark does not consume RELATES_TO edges; skipping LinkOnWrite
+		// avoids up to ~40 embedding calls per message (docs/v0.3/tech-specs/
+		// 03-omnimemeval-benchmark.md).
+		SkipLinkOnWrite: true,
 	}
 
 	srv, err := bench.NewServer(deps, bench.Options{

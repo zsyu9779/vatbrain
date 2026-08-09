@@ -16,6 +16,13 @@ type scoredEpisodic struct {
 	score float64
 }
 
+// embeddingRankPool bounds the project candidates fetched for in-Go
+// cosine/surprise ranking. Generous enough that a benchmark user's full
+// episodic set (HaluMem Medium ~2500) is ranked holistically, while still
+// capping memory: each candidate carries a 2048-dim context vector (~16KB),
+// so 5000 candidates ≈ 80MB transient at the worst case.
+const embeddingRankPool = 5000
+
 // SearchEpisodic searches episodic memories. If an embedding is provided in the
 // request, candidates are ranked by in-process cosine similarity. Otherwise,
 // results are ranked by weight descending.
@@ -60,12 +67,13 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 	}
 	fetchLimit := limit
 	if req.Embedding != nil || req.SurpriseBoost > 0 {
-		// Surprise-boosted ranking happens in Go (the SQL ORDER BY only sees
-		// the stored weight), so fetch a wider pool and re-rank locally.
-		fetchLimit = limit * 5
-		if fetchLimit > 500 {
-			fetchLimit = 500
-		}
+		// Cosine/surprise ranking happens in Go, so the SQL layer must fetch a
+		// generous candidate pool and re-rank locally. The old limit*5 (capped
+		// at 500) was too small: with near-uniform weights (e.g. a freshly
+		// ingested benchmark user), `ORDER BY weight DESC` selects an arbitrary
+		// subset and the true best-embedding match can fall outside the pool —
+		// which pinned pinpoint-fact recall at ~10% on HaluMem.
+		fetchLimit = embeddingRankPool
 	}
 
 	query := fmt.Sprintf(`
