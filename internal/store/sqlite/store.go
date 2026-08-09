@@ -156,6 +156,25 @@ func (s *Store) MarkObsolete(_ context.Context, id uuid.UUID, at time.Time) erro
 	return err
 }
 
+// DeleteEpisodicByProject removes every episodic memory under projectID and
+// returns how many rows were deleted. Used by the OmniMemEval benchmark
+// entrypoint to isolate per-user evaluation runs.
+//
+// The hot cache is purged so cached non-embedding search results cannot serve
+// rows that were just deleted (the cache mirrors persisted rows for up to its
+// TTL).
+func (s *Store) DeleteEpisodicByProject(_ context.Context, projectID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.Exec(`DELETE FROM episodic_memories WHERE project_id = ?`, projectID)
+	if err != nil {
+		return 0, err
+	}
+	s.hotCache.Clear()
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // ── Semantic Memory ─────────────────────────────────────────────────────────
 
 // WriteSemantic stores a semantic memory.

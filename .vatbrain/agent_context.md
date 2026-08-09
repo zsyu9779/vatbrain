@@ -12,6 +12,26 @@
 - **hermes**: `~/.hermes/hermes-agent`（HEAD 52920747e）+ 插件 `~/.hermes/plugins/vatbrain/` 已激活（config.yaml memory.provider: vatbrain）
 - **战略决策（2026-08-08）**: Neo4j+pgvector 重型存储弃用，后续只投入 SQLite 路径
 
+## 最近工作（2026-08-09）— OmniMemEval benchmark 集成（分支 feature/omnimemeval-benchmark，默认不合 main）
+
+- 用户指令：单独开分支做测评，不合入 main，除非 adapter 对项目推进/完整性有正向价值。
+- **已实现并全链路验证**（go test 555/25 全绿；LoCoMo 真实 smoke 1540/1540 检索成功）：
+  - `cmd/vatbrain-bench`（HTTP add/search/delete/health，复用 core.WriteMemory + provider.RetrieveEpisodic，独立 SQLite 评测库）
+  - `internal/bench/`（Gate 模式开关：off=测检索内核默认，on=真实显著性门控消融）
+  - `store.EpisodicDeleteStore` 可选能力接口（sqlite + in-memory，沿用 RuleConflictStore 先例）
+  - `eval/omnimemeval/`（vatbrain_client.py adapter + patch.py/setup.sh 幂等注册 + 7 个 mock 单测 + 操作指南）
+  - 设计文档：`docs/v0.3/tech-specs/03-omnimemeval-benchmark.md`
+- **关键决策**：user_id→ProjectID；默认 keyword embedder（零 API 可本地 smoke，正式分数需语义密钥）；`chat_time` 未写入（D7 已知限制）。
+- **跑真实 benchmark 需要**：ANSWER/EVAL OpenAI 兼容密钥 + VatBrain 语义 embedding 密钥（VATBRAIN_EMBEDDER_SEMANTIC_*）。
+- 待办：对抗性审查 workflow 结果处理 + 提交分支。
+
+## 最近工作（2026-08-09）— OmniMemEval 评测框架评估（研究任务，未改代码）
+
+- 克隆 `MemTensor/OmniMemEval` 到 /tmp/OmniMemEval（3.7 万行 Python，浅克隆），评估其作为 VatBrain 记忆能力评测入口的可行性。
+- 结论：工程/架构/文档质量高（adapter 层 15 个 backend、六阶段 pipeline、checkpoint/replay、LLM-as-judge+多指标）；风险=发布方 MemTensor 是 MemOS 母公司且 MemOS 全项第一（利益冲突需复核 adapter 配置）、复现分与官方分差距大、PersonaMem v2 多数 backend 贴近随机。
+- **对 VatBrain 的启示**：User Memory 线可写 adapter（add/search/delete）评测 VatBrain；**HaluMem 与 ConflictResolver/Pitfall/decay 设计高度契合**，最适合先测。注意：benchmark 全英文对话、search() 需适配成纯文本 top-k。
+- 待用户决策：是否写正式评估 artifact / 是否评估"VatBrain adapter"工作量。
+
 ## 最近工作（2026-08-09）— backlog issue #1 P0+P1 全部完成 + 合并 main
 
 ### 本次完成

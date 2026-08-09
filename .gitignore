@@ -27,3 +27,7 @@ docs/PROMOTION_STRATEGY.md
 
 # Superpowers intermediate design and execution docs
 docs/superpowers/
+
+# OmniMemEval benchmark
+/bin/
+/vatbrain-bench

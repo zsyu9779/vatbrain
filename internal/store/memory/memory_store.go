@@ -177,6 +177,22 @@ func (s *Store) MarkObsolete(_ context.Context, id uuid.UUID, at time.Time) erro
 	return nil
 }
 
+// DeleteEpisodicByProject removes every episodic memory under projectID and
+// returns how many were removed. Used by the OmniMemEval benchmark entrypoint
+// to isolate per-user evaluation runs.
+func (s *Store) DeleteEpisodicByProject(_ context.Context, projectID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted := 0
+	for id, m := range s.episodics {
+		if m.ProjectID == projectID {
+			delete(s.episodics, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 // WriteSemantic stores a semantic memory.
 func (s *Store) WriteSemantic(_ context.Context, mem *models.SemanticMemory) error {
 	s.mu.Lock()
