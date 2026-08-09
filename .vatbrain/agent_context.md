@@ -4,14 +4,31 @@
 
 ## 项目状态
 
+- **当前任务**: VatBrain Logo 三方向设计（设计说明已确认，候选稿待生成）
 - **阶段**: Hermes 集成 **Phase 1-6 全部完成并已合并到 main** ✅
 - **语言**: Go (go 1.25.5) + Python（hermes 插件）
-- **分支**: `feature/agent-memory-watcher` 已合并（快进）并删除本地分支；当前在 `main`（已推送，117 文件 +15,679 行）
-- **远端**: `origin/feature/agent-memory-watcher` 仍存在（已合并，可删）
+- **分支**: 当前在 `main`，已快进同步至 `origin/main` 的 `916fb9b`
+- **远端**: `origin/feature/agent-memory-watcher` 已删除
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点
 - **hermes 源码**: 本机 `~/.hermes/hermes-agent`（HEAD 52920747e，工作树干净）
 - **hermes 插件**: 已安装 `~/.hermes/plugins/vatbrain/` + daemon 二进制 `~/.hermes/vatbrain/bin/vatbrain-provider`
 - **战略决策（2026-08-08）**: Neo4j+pgvector 重型存储将弃用，后续只投入 SQLite 路径
+
+## 最近工作（2026-08-09）— Logo 三方向设计
+
+### 本次完成
+
+1. 将本地 `main` 从 `eb01dae` 快进到 `916fb9b`，与 `origin/main` 一致。
+2. 检查项目品牌语境与现有视觉资产；仓库内尚无 Logo 文件。
+3. 确认主要场景为 GitHub README / 项目主页，形式为“图形标 + `VatBrain` 字标”。
+4. 定稿三条候选方向：极简科技、神经生物、赛博科幻。
+5. 新增设计说明：`docs/superpowers/specs/2026-08-09-vatbrain-logo-design.md`。
+
+### 下一步
+
+1. 用户审阅设计说明。
+2. 审阅通过后生成三张 PNG 候选稿并保存到 `assets/logo/`。
+3. 检查文字、构图和风格差异，更新本上下文并提交资产。
 
 ## 最近工作（2026-08-08）— Phase 6 评测 harness（20 场景）
 
