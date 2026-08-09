@@ -459,3 +459,36 @@ func TestCharBigramOverlap_CJK(t *testing.T) {
 	assert.InDelta(t, 1.0, charBigramOverlap("软路由调试", "软路由调试"), 1e-9)
 	assert.Less(t, charBigramOverlap("量子引力", "菜谱烹饪"), 0.1)
 }
+
+// TestParsePitfallResponse_Array picks the highest-confidence bug when the LLM
+// returns multiple distinct patterns for one entity (02b spec array format).
+func TestParsePitfallResponse_Array(t *testing.T) {
+	raw := `[
+	  {"signature":"A: connection pool exhausted","root_cause_category":"RESOURCE_EXHAUSTION","fix_strategy":"raise MaxOpenConns","confidence":0.6},
+	  {"signature":"B: nil pointer on timeout","root_cause_category":"CONTRACT_VIOLATION","fix_strategy":"nil-check","confidence":0.9}
+	]`
+	out, err := parsePitfallResponse(raw)
+	require.NoError(t, err)
+	assert.Contains(t, out.Signature, "nil pointer")
+	assert.Equal(t, 0.9, out.Confidence)
+}
+
+// TestBuildPitfallExtractionPrompt_Truncates ensures the 02b token budget:
+// each summary is capped at 500 runes and the template has header + closing.
+func TestBuildPitfallExtractionPrompt_Truncates(t *testing.T) {
+	long := ""
+	for i := 0; i < 600; i++ {
+		long += "汉"
+	}
+	sc := SubCluster{Episodics: []store.EpisodicScanItem{
+		{Summary: long},
+		{Summary: "短记忆"},
+	}}
+	prompt := buildPitfallExtractionPrompt("func:X", "p", "go", sc)
+	assert.Contains(t, prompt, "Entity: func:X")
+	assert.Contains(t, prompt, "Project: p | Language: go")
+	assert.Contains(t, prompt, "Analyze these 2 debug sessions")
+	// 单条 600 字摘要被截断到 500 字 → prompt 有界（500 + 头部/编号开销）
+	assert.Less(t, len([]rune(prompt)), 750,
+		"prompt 应受 token 预算约束（单条 ≤500 字），got %d", len([]rune(prompt)))
+}

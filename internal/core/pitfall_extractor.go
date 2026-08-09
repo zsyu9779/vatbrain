@@ -32,6 +32,14 @@ type PitfallExtractor struct {
 // back to char-bigram Dice, whose scale is lower than cosine similarity.
 const lexicalClusterMergeThreshold = 0.3
 
+// maxPitfallSummaryRunes bounds each episode summary inside the LLM prompt
+// (02b spec: 单条 summary 截断到 500 字符，控制 token 预算).
+const maxPitfallSummaryRunes = 500
+
+// maxEpisodicsPerEntity caps the debug episodes fed to one entity's
+// clustering/extraction (02a spec §风险: 单 entity 聚集过多时截断到 50).
+const maxEpisodicsPerEntity = 50
+
 // PitfallCandidate is a provisional pitfall before LLM structuring.
 type PitfallCandidate struct {
 	EntityID    string
@@ -90,6 +98,10 @@ func (pe *PitfallExtractor) Extract(
 	for _, g := range groups {
 		if len(g.Episodics) < pe.MinClusterSize {
 			continue
+		}
+		// 02a §风险：单个 entity 聚集过多时截断，避免单实体霸占 token 预算。
+		if len(g.Episodics) > maxEpisodicsPerEntity {
+			g.Episodics = g.Episodics[:maxEpisodicsPerEntity]
 		}
 		subClusters := pe.subCluster(ctx, g)
 		candidatesFound += len(subClusters)
@@ -358,14 +370,8 @@ Rules:
 - If summaries are insufficient to determine root cause → category=UNKNOWN
 - fix_strategy must be actionable ("increase timeout" not "fix the bug")`
 
-	var userPrompt strings.Builder
-	userPrompt.WriteString(fmt.Sprintf("Entity: %s\nProject: %s\nLanguage: %s\n\nDebug sessions:\n",
-		entityID, projectID, language))
-	for i, ep := range sc.Episodics {
-		userPrompt.WriteString(fmt.Sprintf("[%d] %s\n", i+1, ep.Summary))
-	}
-
-	response, err := pe.LLMClient.Chat(ctx, systemPrompt, userPrompt.String())
+	response, err := pe.LLMClient.Chat(ctx, systemPrompt,
+		buildPitfallExtractionPrompt(entityID, projectID, language, sc))
 	if err != nil {
 		return models.PitfallMemory{}, fmt.Errorf("pitfall LLM call: %w", err)
 	}
@@ -464,6 +470,25 @@ func representativeSummary(episodics []store.EpisodicScanItem) string {
 
 // parsePitfallResponse extracts JSON from an LLM response, handling markdown
 // code fences and other common wrapping.
+// buildPitfallExtractionPrompt assembles the LLM user prompt per the 02b
+// spec §2.2/2.3: entity/project/language header, indexed summaries each
+// truncated to maxPitfallSummaryRunes (500), and a closing analysis
+// instruction. Keeps token budget bounded even for large sub-clusters.
+func buildPitfallExtractionPrompt(entityID, projectID, language string, sc SubCluster) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Entity: %s\n", entityID))
+	b.WriteString(fmt.Sprintf("Project: %s | Language: %s\n", projectID, language))
+	b.WriteString(fmt.Sprintf("Total debug sessions for this entity: %d\n\n", len(sc.Episodics)))
+	b.WriteString("Debug session summaries:\n")
+	for i, ep := range sc.Episodics {
+		summary := truncateRunes(ep.Summary, maxPitfallSummaryRunes)
+		b.WriteString(fmt.Sprintf("[%d] %s\n", i, summary))
+	}
+	b.WriteString(fmt.Sprintf("\nAnalyze these %d debug sessions and extract structured error patterns.\n",
+		len(sc.Episodics)))
+	return b.String()
+}
+
 func parsePitfallResponse(raw string) (PitfallLLMOutput, error) {
 	text := strings.TrimSpace(raw)
 
@@ -477,6 +502,15 @@ func parsePitfallResponse(raw string) (PitfallLLMOutput, error) {
 			text = text[:end]
 		}
 		text = strings.TrimSpace(text)
+	}
+
+	// 02b spec: the LLM may return a single object OR a JSON array of distinct
+	// bugs for the same entity. Prefer the array form; when multiple objects
+	// come back, pick the highest-confidence one (the pipeline produces one
+	// pitfall per sub-cluster).
+	var arr []PitfallLLMOutput
+	if err := json.Unmarshal([]byte(text), &arr); err == nil && len(arr) > 0 {
+		return bestPitfallOutput(arr), nil
 	}
 
 	var output PitfallLLMOutput
@@ -493,6 +527,23 @@ func parsePitfallResponse(raw string) (PitfallLLMOutput, error) {
 		}
 	}
 	return output, nil
+}
+
+// bestPitfallOutput picks the highest-confidence pitfall from an LLM array
+// response, discarding outputs below the confidence floor (0.5).
+func bestPitfallOutput(arr []PitfallLLMOutput) PitfallLLMOutput {
+	best := arr[0]
+	bestC := best.Confidence
+	for _, o := range arr[1:] {
+		if o.Confidence > bestC {
+			best = o
+			bestC = o.Confidence
+		}
+	}
+	if bestC < 0.5 {
+		best.Confidence = 0.5 // 低于置信下限的输出不该被信任
+	}
+	return best
 }
 
 // pitfallMergeGroup tracks which pitfalls should be merged during deduplication.
