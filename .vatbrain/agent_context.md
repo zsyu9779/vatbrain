@@ -15,15 +15,42 @@
 ## 最近工作（2026-08-09）— OmniMemEval benchmark 集成（分支 feature/omnimemeval-benchmark，默认不合 main）
 
 - 用户指令：单独开分支做测评，不合入 main，除非 adapter 对项目推进/完整性有正向价值。
-- **已实现并全链路验证**（go test 555/25 全绿；LoCoMo 真实 smoke 1540/1540 检索成功）：
+- **已完成并提交**（commit `490f99c`，分支 feature/omnimemeval-benchmark，go test 561/25 全绿；LoCoMo 真实 smoke 1540/1540 检索成功）：
   - `cmd/vatbrain-bench`（HTTP add/search/delete/health，复用 core.WriteMemory + provider.RetrieveEpisodic，独立 SQLite 评测库）
   - `internal/bench/`（Gate 模式开关：off=测检索内核默认，on=真实显著性门控消融）
   - `store.EpisodicDeleteStore` 可选能力接口（sqlite + in-memory，沿用 RuleConflictStore 先例）
   - `eval/omnimemeval/`（vatbrain_client.py adapter + patch.py/setup.sh 幂等注册 + 7 个 mock 单测 + 操作指南）
   - 设计文档：`docs/v0.3/tech-specs/03-omnimemeval-benchmark.md`
-- **关键决策**：user_id→ProjectID；默认 keyword embedder（零 API 可本地 smoke，正式分数需语义密钥）；`chat_time` 未写入（D7 已知限制）。
+- **关键决策**：user_id→ProjectID；默认 keyword embedder（零 API 可本地 smoke，正式分数需语义密钥）；`chat_time` 未写入（D7 已知限制）；bench server 默认绑 127.0.0.1，非回环需 VATBRAIN_BENCH_API_TOKEN。
+- **对抗性审查**（19 findings → 18 确认）已全部处理：hotCache delete 失效、认证 token、GateMode 校验、decodeJSON 413/尾部、部分失败计数、working-mem 清理、.gitignore 锚定、adapter _retry、sqlite 后端 e2e 测试等。
 - **跑真实 benchmark 需要**：ANSWER/EVAL OpenAI 兼容密钥 + VatBrain 语义 embedding 密钥（VATBRAIN_EMBEDDER_SEMANTIC_*）。
-- 待办：对抗性审查 workflow 结果处理 + 提交分支。
+- 下一步（待用户决策）：是否提供密钥跑真实分数；是否将 adapter 合并入 main（判断：对项目完整性有正向价值，但遵用户指令默认不合，等明确指示）。
+
+## 最近工作（2026-08-09）— HaluMem 真实评测（smoke 完成 + 全量进行中）
+
+- **端点**：DeepSeek chat（deepseek-v4-flash）+ 智谱 embedding（embedding-3，2048 维），两都验证通过。
+- **Smoke 结果**（user 0，164 题，池修复前）：整体 **37.8%**；Memory Boundary **95%**、Basic Fact Recall **10%**。诊断出检索缺陷：`SearchEpisodic` embedding 候选池只取 weight 前 100（上限 500），近均匀权重下任意，具体事实常漏。
+- **已修复并提交**（`3cf67ad`）：候选池提至 5000（`embeddingRankPool`）+ 回归测试 + bench 启动打印 embedder。修复后全量 user（2805 记忆）superfood/classical/skydiving 均进 top-20 上下文。
+- **全量评测完成（User Memory 轨 3 benchmark）**：
+  - **HaluMem 64.97%**（3460 题，20 users）：Boundary 96.3%（顶尖，MemOS 91.3）、Conflict 70.5%、Generalization 58.2%、Multi-hop 51.3%、**Basic Fact 43.6%**（smoke 10%→修复后）、Dynamic Update 28.9%
+  - **LoCoMo 57.0%**（914 题）：Single Hop 74.6%、Multi-hop 51.3%、Open Domain 56.1%、**Temporal Reasoning 15.0%**（D7 chat_time 未写入，时序短板）
+  - **LongMemEval 待出分**（本轮最后）
+- **过程修复**（OmniMemEval 克隆侧，公平于所有产品）：
+  1. `extract_label_json` 三连修：容忍 JSON+多余字段 → 裸词/散文 → 无引号值（DeepSeek judge 输出格式不稳）
+  2. judge prompt 改为"只输出 JSON"（原 prompt 自相矛盾"先解释+只输出label"）
+  3. `LLM_DISABLE_THINKING=1` 开关（下轮开启，对齐官方 gpt-4o-mini 非 thinking 口径；DeepSeek 开 thinking 拖慢 answer/judge）
+- 教训：bench 重启必须 source `.env.bench`；后台 Bash watcher 会被杀，改用 Monitor；三路并行需独立 bench 实例（不同端口/DB）。
+- **下一轮计划**（待用户决策）：关 thinking 重跑；修时序短板（chat_time 写入）;是否上 Agent Memory 轨（Hermes+vatbrain 插件，可跳 SWE-Bench 或用 orange Docker）。
+
+## 最近工作（2026-08-10）— 文档 + 并发调研
+
+- **报告文档**：`docs/v0.3/04-omnimemeval-benchmark-results.md`（三 benchmark 分数 + 分类 + 对比 + 方法论 + 复现命令）
+- **handoff 文档**：`docs/v0.3/05-agent-memory-handoff.md`（Agent Memory 轨新会话启动指南：EvoAgentBench 数据、Hermes+vatbrain 插件、域依赖、SWE-Bench 用 orange Docker、`LLM_DISABLE_THINKING=1`）
+- **并发调研**（实测 + 官方）：
+  - 智谱 embedding-3：官方按账号等级限**在途并发**（V0=50/V1=100/V2=300/V3=500）；实测 64 并发全过 → 账号至少 V1；建议 32-64
+  - DeepSeek chat：实测 32 并发全过；answer/judge 16-32 worker
+  - **最大提速点**：bench `handleAdd` 当前顺序 embedding → 改并发可 30-60× 缩短 ingestion
+- 待办：以上两个文档需提交；后续按 handoff 启动 Agent Memory 轨。
 
 ## 最近工作（2026-08-09）— OmniMemEval 评测框架评估（研究任务，未改代码）
 
