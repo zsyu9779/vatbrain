@@ -282,3 +282,34 @@
 **收尾**：合并 `feature/backlog-implementation` → main（当前工作树干净，21/21 测试全绿）
 
 - Hermes 集成全部完成并已激活（用户授权 config.yaml memory.provider: vatbrain）
+
+---
+
+## 2026-08-09 — HaluMem 真实评测（smoke 完成 + 全量进行中）
+
+- **端点**：DeepSeek chat（deepseek-v4-flash）+ 智谱 embedding（embedding-3，2048 维）。
+- **Smoke 结果**（user 0，164 题，池修复前）：整体 **37.8%**；Memory Boundary **95%**、Basic Fact Recall **10%**。诊断出检索缺陷：`SearchEpisodic` embedding 候选池只取 weight 前 100（上限 500）→ 修复为 5000（`embeddingRankPool`，commit `3cf67ad`）。
+- **全量评测完成（User Memory 轨 3 benchmark）**：
+  - **HaluMem 64.97%**（3460 题，20 users）：Boundary 96.3%（顶尖）、Conflict 70.5%、Generalization 58.2%、Multi-hop 51.3%、Basic Fact 43.6%、Dynamic Update 28.9%
+  - **LoCoMo 57.0%**（914 题）：Single Hop 74.6%、Multi-hop 51.3%、Open Domain 56.1%、Temporal 15.0%（时序短板）
+  - **LongMemEval 74.2%**（500 题）
+- **过程修复**（OmniMemEval 克隆侧）：`extract_label_json` 三连修、judge prompt 改"只输出 JSON"、`LLM_DISABLE_THINKING=1` 开关。
+- 教训：bench 重启必须 source `.env.bench`；后台 Bash watcher 会被杀，改用 Monitor；三路并行需独立 bench 实例。
+
+## 2026-08-09 — OmniMemEval 评测框架评估（研究任务，未改代码）
+
+- 克隆 `MemTensor/OmniMemEval` 到 /tmp/OmniMemEval，评估其作为 VatBrain 记忆能力评测入口的可行性。
+- 结论：工程/架构/文档质量高（adapter 层 15 个 backend、六阶段 pipeline、LLM-as-judge+多指标）；风险=发布方 MemTensor 是 MemOS 母公司（利益冲突需复核）、复现分与官方分差距大、PersonaMem v2 多数 backend 贴近随机。
+- 对 VatBrain 的启示：User Memory 线可写 adapter 评测；**HaluMem 与 ConflictResolver/Pitfall/decay 设计高度契合**。
+
+## 2026-08-09 — backlog issue #1 P0+P1 全部完成 + 合并 main
+
+- **P1-6 Surprise Score**：`models.EpisodicMemory/SemanticMemory.SurpriseScore` + sqlite 迁移；`core.SurpriseScorer`（纠正 0.7/行为改变 0.5/显式指令 0）；`WeightDecayEngine.SurpriseHalfLifeBoost`（最高 3× 半衰期）；检索 `EpisodicSearchRequest.SurpriseBoost`。文档：`docs/v0.3/tech-specs/01-surprise-score.md`
+- **P1-5 ConflictResolver**：`core.ConflictDetector`（极性+bigram，CJK-safe）+ `ConflictResolver`（高 trust 覆盖）；`models.RuleConflict` + sqlite 表；`store.RuleConflictStore` 可选能力接口；MCP `detect/list/resolve_rule_conflicts`。文档：`docs/v0.3/tech-specs/02-conflict-resolver.md`
+- **P1-7 更多 Watcher 适配器**：`codex.go`（OpenAI Codex 会话 JSONL）+ `openclaw.go`（OpenClaw 记忆 markdown）；配置 `VATBRAIN_CODEX_SESSIONS_PATH`/`VATBRAIN_OPENCLAW_MEMORY_PATH`。
+- 验收：`go test ./internal/...` **547/22 包全绿** + go vet 干净；issue #1 checkbox 勾选；feature 分支快进合并 main。
+- 用户指令：P1 清完即视为完成，P2/P3 暂缓。
+
+## 2026-08-09 — Logo 三方向设计（另一会话，已并入 main）
+
+- README 首屏加 VatBrain logo（`assets/logo/vatbrain-logo.png`）；`docs/superpowers/` 已 .gitignore
