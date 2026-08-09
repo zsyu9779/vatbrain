@@ -102,8 +102,10 @@ type WatcherConfig struct {
 	AdapterConfigDir  string        // VATBRAIN_WATCHER_CONFIG_DIR: custom adapter YAML dir
 	DataDir           string        // VATBRAIN_WATCHER_DATA_DIR: seen set persistence dir
 	RefinePromptFile  string        // VATBRAIN_WATCHER_REFINE_PROMPT_FILE: custom LLM prompt
-	ClaudeCodeHomeDir string        // VATBRAIN_CLAUDE_CODE_HOME: override home dir
+	ClaudeCodeHomeDir  string       // VATBRAIN_CLAUDE_CODE_HOME: override home dir
 	OpenCodeMemoryPath string       // VATBRAIN_OPENCODE_MEMORY_PATH
+	CodexSessionsPath  string       // VATBRAIN_CODEX_SESSIONS_PATH: Codex sessions root
+	OpenClawMemoryPath string       // VATBRAIN_OPENCLAW_MEMORY_PATH: OpenClaw memory root
 	HermesHomeDir      string       // VATBRAIN_WATCHER_HERMES_HOME: hermes home (default ~/.hermes)
 }
 
@@ -230,6 +232,8 @@ func LoadFromEnv() Config {
 			RefinePromptFile:   envStr("VATBRAIN_WATCHER_REFINE_PROMPT_FILE", ""),
 			ClaudeCodeHomeDir:  envStr("VATBRAIN_CLAUDE_CODE_HOME", ""),
 			OpenCodeMemoryPath: envStr("VATBRAIN_OPENCODE_MEMORY_PATH", ""),
+			CodexSessionsPath:  envStr("VATBRAIN_CODEX_SESSIONS_PATH", ""),
+			OpenClawMemoryPath: envStr("VATBRAIN_OPENCLAW_MEMORY_PATH", ""),
 			HermesHomeDir:      envStr("VATBRAIN_WATCHER_HERMES_HOME", ""),
 		},
 	}
