@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo/vatbrain-logo.png" alt="VatBrain logo" width="720">
+</p>
+
 # VatBrain — Pitfall-Aware Memory Layer for Coding Agents
 
 > 面向 coding agent 的错误经验记忆层 / A pitfall-aware memory layer for coding agents.

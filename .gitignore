@@ -24,3 +24,6 @@ Thumbs.db
 
 # Internal strategy docs
 docs/PROMOTION_STRATEGY.md
+
+# Superpowers intermediate design and execution docs
+docs/superpowers/
