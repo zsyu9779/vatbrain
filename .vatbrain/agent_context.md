@@ -4,10 +4,10 @@
 
 ## 项目状态
 
-- **阶段**: Hermes 集成 **Phase 1-6 全部完成并已合并到 main** ✅
+- **阶段**: Hermes 集成 Phase 1-6 已完成并入 main；**backlog issue #1 实施中（P0+P1 部分完成）**
 - **语言**: Go (go 1.25.5) + Python（hermes 插件）
-- **分支**: `feature/agent-memory-watcher` 已合并（快进）并删除本地分支；当前在 `main`（已推送，117 文件 +15,679 行）
-- **远端**: `origin/feature/agent-memory-watcher` 仍存在（已合并，可删）
+- **分支**: `feature/backlog-implementation`（P0-1 至 P1-4 已提交推送，工作树待同步）
+- **远端**: `origin/feature/agent-memory-watcher` 已删；main 已含 Hermes 全量
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点
 - **hermes 源码**: 本机 `~/.hermes/hermes-agent`（HEAD 52920747e，工作树干净）
 - **hermes 插件**: 已安装 `~/.hermes/plugins/vatbrain/` + daemon 二进制 `~/.hermes/vatbrain/bin/vatbrain-provider`
@@ -123,12 +123,22 @@
 - 真实 `~/.hermes/config.yaml` **未激活**（被权限门拦下）：需加 `memory: {provider: vatbrain}` 才能让 hermes 加载 provider 并出现 "Memory provider 'vatbrain' activated" 日志——**待用户授权**
 - `~/.hermes/config.yaml` 无 memory 段（内置 memory 工具仍关，符合 D5）
 
-## 下一步
+## 下一步（backlog 实施，issue #1）
 
-- **剩余构想已盘点并整理为 GitHub Issue**：`https://github.com/zsyu9779/vatbrain/issues/1`（P0-P3 分层，含建议执行顺序）
-- P0 建议先做：v0.4 Public DX（README 定位 + DEMO_SCRIPT + COMPETITIVE_LANDSCAPE）→ v0.3 反馈闭环 → Watcher GA 收尾（opencode adapter / list_adapters new_count/skipped_count / e2e demo）
+**已完成并提交**（`feature/backlog-implementation`，P0-1 至 P1-4）：
+- P0-1 v0.4 Public DX：README 定位改写 + DEMO_SCRIPT + COMPETITIVE_LANDSCAPE + CONTRIBUTING（good first issues）
+- P0-2 v0.3 反馈闭环：ProtectionLevel + TimesAdopted + feedback_pitfall 工具 + suppress 降权 + 保护衰减
+- P0-3 Watcher GA：OpenCode 适配器实现、list_adapters new/skipped_count、GA e2e 测试；修了 extractor 零向量聚类 bug + 泛化签名
+- P0-4 hermes 插件钩子：on_turn_start/on_pre_compress/on_delegation/backup_paths + daemon maintenance/pre_compress/on_delegation + SourceTypeDelegation
+- P1-1 评测增强：三组对比 + useful/false injection + task time/token 指标 + benchmark 报告（59.9% vs generic 24.7%，useful 65.9%）
+- P1-2 模块复杂度入风险评分（ROADMAP 公式）
+- P1-3 双通道 Embedder：KeywordEmbedder（CJK 伪向量）+ SemanticProvider（OpenAI 兼容/local）+ EmbedderConfig + env
+- P1-4 Pitfall LLM 提取补全：spec prompt + 500 截断 + 数组解析 + 实体上限 50
+
+**待办（下次会话）**：P1-5 ConflictResolver、P1-6 Surprise Score、P1-7 更多适配器（Codex/OpenClaw）、P2 六件套/架构概念、P3 + 技术债（详见 issue #1）
+**收尾**：合并 `feature/backlog-implementation` → main（当前工作树干净，21/21 测试全绿）
+
 - Hermes 集成全部完成并已激活（用户授权 config.yaml memory.provider: vatbrain）
-- 后续工作应在新建 feature 分支上开展（main 为集成分支）；可选清理 `origin/feature/agent-memory-watcher` 远端分支
 
 ## 已知问题
 
