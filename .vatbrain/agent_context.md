@@ -124,9 +124,9 @@
 
 ## 下一步
 
-1. 提交推送 Phase 6（独立 commit）→ Hermes 集成全部完成
-2. **待用户授权**：激活 `~/.hermes/config.yaml` `memory.provider: vatbrain`（手动或授权我做），下次 hermes 启动验证 "Memory provider 'vatbrain' activated" 日志 + `<memory-context>` 注入 + prepare_edit_context 工具可用
-3. 后续可选：真实 hermes 会话评测（eval harness 已提供确定性替代）；v0.2.1 GA 准出（opencode adapter 补齐）
+- **剩余构想已盘点并整理为 GitHub Issue**：`https://github.com/zsyu9779/vatbrain/issues/1`（P0-P3 分层，含建议执行顺序）
+- P0 建议先做：v0.4 Public DX（README 定位 + DEMO_SCRIPT + COMPETITIVE_LANDSCAPE）→ v0.3 反馈闭环 → Watcher GA 收尾（opencode adapter / list_adapters new_count/skipped_count / e2e demo）
+- Hermes 集成全部完成并已激活（用户授权 config.yaml memory.provider: vatbrain）
 
 ## 已知问题
 
