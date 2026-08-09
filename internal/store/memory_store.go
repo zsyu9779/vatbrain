@@ -133,3 +133,22 @@ type MemoryStore interface {
 	HealthCheck(ctx context.Context) error
 	Close() error
 }
+
+// RuleConflictStore is the optional conflict-governance capability a backend
+// may implement on top of MemoryStore (ROADMAP v1.0 冲突协调引擎). SQLite and
+// the in-memory store implement it; backends that do not (e.g. the deprecated
+// Neo4j+pgvector store) simply omit the methods, and conflict tools report the
+// backend as unsupported via a type assertion.
+type RuleConflictStore interface {
+	// ListRuleConflicts returns conflict records, optionally filtered by status
+	// ("" = all), most recent first, capped at limit (0 = default 20).
+	ListRuleConflicts(ctx context.Context, status string, limit int) ([]models.RuleConflict, error)
+	// SaveRuleConflict stores a newly detected conflict as pending.
+	SaveRuleConflict(ctx context.Context, c *models.RuleConflict) error
+	// ResolveRuleConflict records a resolution: the winning rule ID plus the
+	// status transition and a free-form reason.
+	ResolveRuleConflict(ctx context.Context, id uuid.UUID, status models.ConflictStatus, resolution uuid.UUID, reason string, at time.Time) error
+	// MarkSemanticObsolete sets obsoleted_at on a semantic memory — how a
+	// losing rule is retired after a conflict resolution.
+	MarkSemanticObsolete(ctx context.Context, id uuid.UUID, at time.Time) error
+}

@@ -17,22 +17,24 @@ import (
 
 // Store implements store.MemoryStore entirely in-process.
 type Store struct {
-	mu           sync.RWMutex
-	episodics    map[uuid.UUID]*models.EpisodicMemory
-	semantics    map[uuid.UUID]*models.SemanticMemory
-	pitfalls     map[uuid.UUID]*models.PitfallMemory
-	edges        []store.Edge
-	pitfallEdges []store.Edge
-	consRuns     map[uuid.UUID]*models.ConsolidationRunResult
+	mu            sync.RWMutex
+	episodics     map[uuid.UUID]*models.EpisodicMemory
+	semantics     map[uuid.UUID]*models.SemanticMemory
+	pitfalls      map[uuid.UUID]*models.PitfallMemory
+	edges         []store.Edge
+	pitfallEdges  []store.Edge
+	consRuns      map[uuid.UUID]*models.ConsolidationRunResult
+	ruleConflicts map[uuid.UUID]*models.RuleConflict
 }
 
 // NewStore creates a new in-memory store.
 func NewStore() *Store {
 	return &Store{
-		episodics: make(map[uuid.UUID]*models.EpisodicMemory),
-		semantics: make(map[uuid.UUID]*models.SemanticMemory),
-		pitfalls:  make(map[uuid.UUID]*models.PitfallMemory),
-		consRuns:  make(map[uuid.UUID]*models.ConsolidationRunResult),
+		episodics:     make(map[uuid.UUID]*models.EpisodicMemory),
+		semantics:     make(map[uuid.UUID]*models.SemanticMemory),
+		pitfalls:      make(map[uuid.UUID]*models.PitfallMemory),
+		consRuns:      make(map[uuid.UUID]*models.ConsolidationRunResult),
+		ruleConflicts: make(map[uuid.UUID]*models.RuleConflict),
 	}
 }
 

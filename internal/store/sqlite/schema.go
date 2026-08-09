@@ -117,6 +117,21 @@ CREATE TABLE IF NOT EXISTS pitfall_edges (
 );
 CREATE INDEX IF NOT EXISTS idx_pitfall_edges_from ON pitfall_edges(from_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_pitfall_edges_to ON pitfall_edges(to_id, edge_type);
+
+CREATE TABLE IF NOT EXISTS rule_conflicts (
+    id TEXT PRIMARY KEY,
+    rule_a_id TEXT NOT NULL,
+    rule_b_id TEXT NOT NULL,
+    entity_group TEXT DEFAULT '',
+    basis TEXT NOT NULL DEFAULT 'polarity',
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolution TEXT DEFAULT '',
+    reason TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rule_conflicts_status ON rule_conflicts(status);
+CREATE INDEX IF NOT EXISTS idx_rule_conflicts_entity ON rule_conflicts(entity_group);
 `
 
 func migrate(db *sql.DB) error {

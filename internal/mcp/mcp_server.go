@@ -42,6 +42,10 @@ func RegisteredTools(a *app.App) []server.ServerTool {
 		feedbackPitfallTool(a),
 		// v0.3 Proactive Risk Injection
 		prepareEditContextTool(a),
+		// v1.0 Conflict Governance (ROADMAP 冲突协调引擎)
+		detectRuleConflictsTool(a),
+		listRuleConflictsTool(a),
+		resolveRuleConflictTool(a),
 	}
 
 	// v0.2.1: Agent Memory Watcher tools are only available when the
