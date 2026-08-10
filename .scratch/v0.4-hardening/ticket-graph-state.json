@@ -12,8 +12,276 @@
     "issues/09-dx-data-ization.md",
     "issues/10-agent-track-code-repair.md"
   ],
-  "results": {},
+  "results": {
+    "01": {
+      "status": "completed",
+      "commit": "2d7c2df658235452a696550e06e0c9fe5096f5c3",
+      "changedFiles": [
+        ".vatbrain/agent_context.md",
+        ".vatbrain/agent_context_archive.md",
+        "cmd/vatbrain-bench/main.go",
+        "docs/v0.4/01-bench-infra.md",
+        "internal/bench/latency.go",
+        "internal/bench/latency_bench_test.go",
+        "internal/bench/latency_test.go",
+        "internal/bench/server.go",
+        "internal/bench/server_test.go",
+        "internal/core/write_pipeline.go",
+        "internal/core/write_pipeline_test.go",
+        "internal/embedder/batch.go",
+        "internal/embedder/batch_test.go",
+        "internal/embedder/semantic.go"
+      ],
+      "freshChecks": [
+        {
+          "command": "go test -count=1 ./internal/bench/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -count=1 ./internal/embedder/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -count=1 ./internal/core/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -race ./internal/embedder/ ./internal/bench/ -run 'EmbedBatch|BatchEmbedder|ConcurrentIngest|WriteMemoryWithEmbedding'",
+          "outcome": "ok"
+        },
+        {
+          "command": "go build ./... && go vet ./internal/embedder/ ./internal/bench/ ./internal/core/ ./cmd/...",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test $(go list ./... | grep -v internal/store/neo4jpg | grep -v internal/db)",
+          "outcome": "ok — 仅 tests/ 包 4 个失败,均为已知 docker 依赖(Neo4j:7687 / pgvector:5432 未运行,非本任务回归)"
+        }
+      ],
+      "reviews": {
+        "standards": "双轴审查(并行 sub-agent,基准点 c9cd9b1)。发现 3 处生产代码吞错误(违反 CLAUDE.md §6 禁止吞错误):batch.go 的 error-body 读取、双通道关键词回退两处,均补 // best-effort 注释修复;重复接口声明(batchCapable/batchSemanticProvider/batchEmbedder)合并为导出的 embedder.BatchCapable;latency_bench_test.go 包注释位置修正。判定项:env 配置静默忽略、4 参 data clump 与既有模式一致保留;gofmt 仓库既有漂移(2 处 hunk 在未触碰区域)有意不扩大 diff。术语规范合规。审查意见全部处理后复测全绿。",
+        "spec": "ticket 三条验收逐条核对:① 并发 embedding——worker 池(默认 32、钳制 [1,64] 可配置)、批量 64 文本/请求、429/1302/1305 指数退避重试、SQLite 顺序写库,全部实现;单测覆盖分块/顺序/重试(429/1302/1305 字符串与数字形态)/并发上限/错误传播/非批量回退,写序由 merge 拼接顺序测试验证;乱序响应按 index 归位。② 延迟微基准——写入 p50/p95/p99(full+precomputed x 内存/SQLite)、检索命中/miss、整合 300 条,可复现命令与结果记录于 docs/v0.4/01-bench-infra.md;首次实测:写 SQLite full p95 58.1ms(<200ms)、命中 p95 39.4ms(<100ms)、miss p95 67.9ms(<500ms)、整合 p95 4.9ms——ROADMAP 里程碑首次实测全部达标。③ 基准/回归——单测覆盖并发与批量逻辑,文档含方法+首次实测数字+技术决策表。已知部分项(已文档化):无 LLM 时整合基准不含语义持久化成本;GateModeOn 下预 embedding 对被门控消息有调用浪费(结果不变)。未发现范围外行为。"
+      },
+      "recovery": "分支 v0.4/ticket-01 上提交 2d7c2df(工作树干净)。回滚:cd /tmp/v0.4-wt-01 && git reset --hard c9cd9b1。主仓库未被触碰;并入主仓库:merge v0.4/ticket-01 或 cherry-pick 2d7c2df。",
+      "recordedAt": "2026-08-10T05:51:58.925Z"
+    },
+    "02": {
+      "status": "completed",
+      "commit": "11ff3468cffacb39034080e6b8ccd02b3d9c3652",
+      "changedFiles": [
+        ".vatbrain/agent_context.md",
+        ".vatbrain/agent_context_archive.md",
+        "docs/v0.4/02-temporal-attribute.md",
+        "internal/bench/server.go",
+        "internal/bench/server_test.go",
+        "internal/core/significance_gate.go",
+        "internal/core/write_pipeline.go",
+        "internal/core/write_pipeline_test.go",
+        "internal/models/episodic_memory.go",
+        "internal/provider/relative_time.go",
+        "internal/provider/relative_time_test.go",
+        "internal/provider/retrieve.go",
+        "internal/store/memory/memory_store.go",
+        "internal/store/memory/temporal_test.go",
+        "internal/store/memory_store.go",
+        "internal/store/sqlite/schema.go",
+        "internal/store/sqlite/search.go",
+        "internal/store/sqlite/store.go",
+        "internal/store/sqlite/temporal_test.go"
+      ],
+      "freshChecks": [
+        {
+          "command": "go vet ./internal/... ./cmd/...",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test ./internal/store/sqlite/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test ./internal/core/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test ./internal/provider/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test ./internal/bench/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test ./internal/store/memory/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test ./internal/models/ ./internal/store/ ./internal/api/ ./internal/mcp/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test $(go list ./... | grep -v -e 'internal/store/neo4jpg' -e 'internal/db/' -e '/tests$')",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test ./... (后台全量)",
+          "outcome": "仅已知 docker 依赖包失败: internal/store/neo4jpg(600s Neo4j 连接超时)、tests/(smoke+e2e 需 Neo4j/pgvector 容器)——与 ticket 01 基线一致,非本次回归"
+        }
+      ],
+      "reviews": {
+        "standards": "双轴审查之 Standards(并行子代理):发现并已修复——(1) 行长>100 三处测试行已换行;(2) 吞错误无 best-effort 注释三处 time.Parse 已补;(3) 'merge' 术语(软):pattern-separation append 为代码库既有概念(MergeAction/ShouldMerge 先例),保留但注释措辞改为 pattern-separation append;(4) 关键决策未落文档:新增 docs/v0.4/02-temporal-attribute.md(10 项技术决策表+范围外清单)。气味修复:重复回退规则收敛至 EffectiveOccurredAt;SortByOccurredAt 守卫局部化;ParseRelativeTime 返回合并为 TimeWindow.SortNewest。保留未改:测试 seed 三副本(需 testutil,权衡后不做,审查认可)。",
+        "spec": "双轴审查之 Spec:验收逐条——(1) 时间属性:occurred_at 列(ALTER+回填+索引,幂等)+ WriteEvent.OccurredAt 透传覆盖 WriteMemory/WriteMemoryWithEmbedding 双路径 + 读取端零值回退 CreatedAt(EffectiveOccurredAt)✅;(2) 时间检索:OccurredAfter/OccurredBefore 窗口过滤 + SortByOccurredAt 排序 + ParseRelativeTime 解析'上周/昨天/最近一次'(中英)✅;(3) 日期前缀兼容层:datePrefixedContent 行为不变(测试断言)✅;(4) 回归:迁移/透传/过滤/排序单测齐全,评测验证留 ticket 06 ✅。范围约束:未动 provider 协议签名(MCP/api/JSON-RPC 零改动,chat_time 接线仅在 bench,生产协议回退 CreatedAt——决策 #9)。两处语义问题已修:(a) 时间排序原纯时间序丢弃相关性 → 改为 rank-then-sort(top-K 相关按 occurred_at 倒序),sqlite/memory/词法回退三路径一致;(b) merge 时新事件显式更早 → 锚点前移(新增测试)。'上周'取滚动 7 天窗口(匹配 LoCoMo 数据,决策 #7 记录)"
+      },
+      "recovery": "回滚:worktree /tmp/v0.4-wt-02 分支 v0.4/ticket-02 上 git reset --hard 2d7c2df(丢弃 11ff3468);或 git revert 11ff3468。主仓库全程未触碰。",
+      "recordedAt": "2026-08-10T06:15:44.166Z"
+    },
+    "04": {
+      "status": "completed",
+      "commit": "9acdde37622ffaa59039c7701a4c21a5a619291d",
+      "changedFiles": [
+        "internal/embedder/expand.go",
+        "internal/embedder/expand_test.go",
+        "internal/embedder/keyword.go",
+        "internal/provider/retrieve.go",
+        "internal/provider/retrieve_test.go",
+        "internal/store/memory_store.go",
+        "internal/store/sqlite/search.go",
+        "internal/store/sqlite/rrf_test.go",
+        ".vatbrain/agent_context.md",
+        ".vatbrain/agent_context_archive.md"
+      ],
+      "freshChecks": [
+        {
+          "command": "go test -count=1 ./internal/store/sqlite/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -count=1 ./internal/embedder/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -count=1 ./internal/provider/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go vet ./internal/embedder/ ./internal/provider/ ./internal/store/sqlite/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test ./... (full suite, run twice)",
+          "outcome": "ok except known env limitation: internal/store/neo4jpg docker hang (pre-declared, not a regression)"
+        }
+      ],
+      "reviews": {
+        "standards": "双轴审查完成,发现并修复全部硬违规:1) rrfRanked 签名 103 字符超行宽 → 换行;2) 测试名含禁用术语 'Dedup' → TestExpandQuery_DuplicateTerms;3) 'dropped' 措辞 → 'excluded'。代码异味已消解:语义打分循环重复 → 抽取共享 semanticScores/rankMap;charBigrams 写路径与 CharBigrams 分歧 → 文档注明写路径须保持字节稳定;entityRefRe 重复 → 提升为 embedder.EntityRefRe。修复后无残留发现。gofmt/vet 干净。",
+        "spec": "ticket 验收逐条核对通过:1) Query expansion 完成(ExpandQuery 确定性 CJK-safe 关键词/实体扩展,复用关键词通道 bigram 基元);2) RRF 完成(Σ 1/(K+rank) 定义正确、K 默认 60 可调且有翻序测试、'不劣于纯语义基线'有守卫测试、硬约束不绕过有测试、时间排序保留有测试);3) 回归测试覆盖扩展/融合/与 SurpriseBoost 共存,评测验证留给 06 收口。范围说明(均有意为之):RetrievePitfalls 共享大小写折叠基元使 pitfall 匹配变宽;api/mcp 检索入口不接线(RRF 为 opt-in 机制);内存后端忽略 Query 退化为纯语义;RrfK<=0 → 默认 60。"
+      },
+      "recovery": "实现全部在 worktree /tmp/v0.4-wt-04(分支 v0.4/ticket-04),主仓库未触碰。回滚:该 worktree 内 git reset --hard 11ff3468(commit 9acdde3 为唯一新增提交)。neo4jpg 测试需 docker Neo4j(未运行,10m 超时挂起),docker-compose 起后即可跑。",
+      "recordedAt": "2026-08-10T06:44:29.274Z"
+    },
+    "03": {
+      "status": "completed",
+      "commit": "39e2882a66d5212f9a725f2fb753efaa708b922d",
+      "changedFiles": [
+        "internal/core/update_tracker.go",
+        "internal/core/update_tracker_test.go",
+        "internal/core/write_pipeline.go",
+        "internal/core/write_pipeline_test.go",
+        "internal/mcp/update_tool.go",
+        "internal/mcp/update_tool_test.go",
+        "internal/mcp/mcp_server.go",
+        "internal/mcp/mcp_server_test.go",
+        "docs/v0.4/03-update-tracking.md",
+        ".vatbrain/agent_context.md",
+        ".vatbrain/agent_context_archive.md"
+      ],
+      "freshChecks": [
+        {
+          "command": "go build ./...",
+          "outcome": "ok"
+        },
+        {
+          "command": "go vet ./internal/core/ ./internal/mcp/ ./internal/bench/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -count=1 ./internal/core/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -count=1 ./internal/mcp/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -count=1 ./internal/bench/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -count=1 $(go list ./... | grep -v docker依赖)",
+          "outcome": "ok — 18/18 packages; 仅已知环境限制排除 internal/db/*、internal/store/neo4jpg、tests/ smoke+e2e(需 docker Neo4j/pgvector,未运行,非回归)"
+        }
+      ],
+      "reviews": {
+        "standards": "6 findings: (1) CONTRIBUTING.md '所有新测试必须含中文用例' 硬性违反——已修复:write_pipeline_test.go 新增中文指令反转用例、update_tool_test.go 新增中文反转用例;(2) ApplyUpdate 调用块两处重复——已修复:提取共享 helper applyUpdateActions;(3) line length 100 软违反——保留(与 conflict_tool.go 既有风格一致);(4) DetectUpdate 接收完整 EpisodicMemory 仅读 4 字段(Feature Envy)——保留(与既有模式一致);(5) p.OldID == carrier.ID 守卫不可达——保留(公开 API 廉价防御);(6) 阈值未覆写——保留(与 ConflictDetector 配置模式一致)。术语合规:SUPERSEDED 复用既有 SupersededEdge 模型;exported 符号均有 doc comment;I/O 均带 ctx;错误均 %w 包装。",
+        "spec": "5 findings: (1) 关键项'新记忆权重提升'在新鲜记忆路径被 ClampWeight 钳制为 1.0 不可见——已修复:TestRunUpdateTracking_BoostObservableOnDecayedCarrier(衰减承载 0.2→0.3 全链路可观测),文档决策 7 注明钳制权衡;(2) 自动检测仅见 top-5 相似池——记录为决策 11(与 pattern separation 共用池,池外由显式信号最近 500 条覆盖);(3) 复述守卫+极性翻转豁免为既有合并语义的必要边界条件——文档化决策 2/3;(4) 原 boost 断言 trivially true——已修复;(5) 跨信号权重复乘(1.5²)——文档化于已知权衡(独立覆盖事件;同信号幂等)。验收逐条:更新检测✅(时间上更新判定,复用 bigram+极性);生效动作✅(MarkObsolete+SUPERSEDED 边+权重提升,可解释可追溯);接口✅(写管线自动检测 + MCP signal_update 显式信号);回归✅(判定/动作/幂等单元+集成测试全绿;评测验证留 ticket 06)。"
+      },
+      "recovery": "worktree /tmp/v0.4-wt-03(分支 v0.4/ticket-03)上 commit 39e2882;主仓库未触碰。回滚:cd /tmp/v0.4-wt-03 && git reset --hard 11ff3468(或 git revert 39e2882)。",
+      "recordedAt": "2026-08-10T06:44:43.293Z"
+    },
+    "08": {
+      "status": "completed",
+      "commit": "111c3759a3b180716b5ee7ce84f5e335fef1a333",
+      "changedFiles": [
+        "internal/provider/condense.go",
+        "internal/provider/condense_test.go",
+        "internal/provider/retrieve.go",
+        "internal/provider/server.go",
+        "docs/v0.4/08-context-condensation.md",
+        ".vatbrain/agent_context.md",
+        ".vatbrain/agent_context_archive.md"
+      ],
+      "freshChecks": [
+        {
+          "command": "go test -count=1 ./internal/provider/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test -count=1 ./internal/...",
+          "outcome": "ok (18 包全绿,零失败)"
+        },
+        {
+          "command": "go vet ./internal/provider/",
+          "outcome": "ok"
+        },
+        {
+          "command": "gofmt -l (改动文件)",
+          "outcome": "clean"
+        },
+        {
+          "command": "go test ./internal/store/sqlite/ ./internal/core/ ./internal/embedder/ ./internal/bench/",
+          "outcome": "ok"
+        },
+        {
+          "command": "go test ./...",
+          "outcome": "除 tests/ 4 个 docker 依赖用例(neo4j/pgvector 未运行,已知环境限制,非回归)外全部 ok"
+        }
+      ],
+      "reviews": {
+        "standards": "2 硬违例已修复:① 行宽>100 全部压至 ≤100;② 文档禁用术语直译(去重/压缩)改为近重复压制/预算精简,代码零禁用词。小点已修:阈值默认逻辑抽为 duplicateThreshold 共享、0.9 命名常量对齐 core.UpdateTracker.RestatementSimilarity、EstimateTokens 注释补 ceil 语义。残留判断项:server.go const 块 gofmt 差异为存量(f500cc4 已有,未动以保 diff 最小);CondenseOptions 双旋钮为测试/bench 预留。",
+        "spec": "逐条验收:① 精简落地 ✓(近重复压制 + token 预算 + 与 RRF 协同的子序列保持守卫);② 可测量 + 减半可复现 ✓(EstimateTokens/PrefetchStats,测试复现 676→226 tokens = 66.6%,15 条 restatement 压制,独立信息点与风险提示全保留);③ 回归 ✓(细节差异 0.84<0.9 不压制守门、常见路径与旧格式逐字节一致、RRF 序不重排、预算只裁尾部、接线级两条相同记忆只注入一条;05 基线对比随 05 票 defer,文档明示随 05/06 重跑收口)。审查发现并修复 1 bug:pitfall 压制缺实体锚(不同实体同签名会折叠)→ 仅同 EntityID 可比 + 跨实体守卫用例。无范围外行为。"
+      },
+      "recovery": "回滚:git -C /tmp/v0.4-wt-08 reset --hard f500cc4(分支 v0.4/ticket-08 无其它提交);或 git revert 111c3759a3b180716b5ee7ce84f5e335fef1a333。worktree 位于 /tmp/v0.4-wt-08,未触碰主仓库。",
+      "recordedAt": "2026-08-10T07:10:33.619Z"
+    }
+  },
   "ownership": {
+    "10": {
+      "files": [
+        "docs/v0.4/",
+        "eval/omnimemeval/"
+      ],
+      "resources": [],
+      "environments": []
+    },
     "01": {
       "files": [
         "internal/bench/",
@@ -92,14 +360,6 @@
       ],
       "resources": [],
       "environments": []
-    },
-    "10": {
-      "files": [
-        "docs/v0.4/",
-        "eval/omnimemeval/"
-      ],
-      "resources": [],
-      "environments": []
     }
   },
   "capabilities": {
@@ -107,6 +367,11 @@
     "gitWorktrees": true,
     "cursorMultitask": false
   },
-  "integration": null,
-  "reviewFixedPoint": "54589408dded2f9f12db10a1e9761bb0ac5df306"
+  "integration": {
+    "status": "passed",
+    "fresh": true,
+    "command": "go build ./... && go vet ./internal/... && go test $(go list ./... | grep -v -e internal/store/neo4jpg -e internal/db/ -e /tests$)",
+    "outcome": "ok — 18 packages green, only known docker-dependent packages excluded"
+  },
+  "reviewFixedPoint": "f500cc4c1e7224ca0ca205be772e4c20b99ad84b"
 }
