@@ -16,9 +16,9 @@
 
 ## 项目状态
 
-- **阶段**: Hermes 集成完成 + backlog issue #1 完成；**Agent Memory 轨 benchmark 全量跑完 = null result（记忆全链路生效但无跨任务迁移价值）；PR #2（OmniMemEval 测评接入）已合入 main** ✅；**v0.4 ticket 01/02/03/04/08 已完成(08 在独立分支待合入)**
+- **阶段**: Hermes 集成完成 + backlog issue #1 完成；**Agent Memory 轨 benchmark 全量跑完 = null result（记忆全链路生效但无跨任务迁移价值）；PR #2（OmniMemEval 测评接入）已合入 main** ✅；**v0.4 代码 ticket 01/02/03/04/08 全部完成并合入 main**;05/06/07/09/10 deferred(真实评测暂缓,2026-08-10 用户指令)
 - **语言**: Go (go 1.25.5) + Python（hermes 插件 + OmniMemEval AgentBench）
-- **分支**: `main`（已合入 PR #2 `feature/omnimemeval-benchmark`）+ v0.4 ticket worktree（01/02/03/04 已合入 main;08 待合入）
+- **分支**: `main`（已合入 PR #2 + v0.4 五个代码 ticket;本地领先 origin 14 提交,未推送）
 - **远端**: `origin/main` 已同步（PR #2 合入后本地已 merge）
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点 · `docs/v0.3/05-agent-memory-handoff.md`（Agent 轨启动指南）· `docs/v0.3/07/08/09-*`（benchmark 规划/烟测/正式结果）
 - **hermes**: `~/.hermes/hermes-agent`（HEAD 52920747e）+ 插件 `~/.hermes/plugins/vatbrain/` 已激活（config.yaml memory.provider: vatbrain）
