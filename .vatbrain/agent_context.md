@@ -10,7 +10,16 @@
 - **远端**: `origin/main` 已含 Hermes 全量 + logo（`assets/logo/vatbrain-logo.png`）
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点
 - **hermes**: `~/.hermes/hermes-agent`（HEAD 52920747e）+ 插件 `~/.hermes/plugins/vatbrain/` 已激活（config.yaml memory.provider: vatbrain）
-- **战略决策（2026-08-08）**: Neo4j+pgvector 重型存储弃用，后续只投入 SQLite 路径
+- **战略决策（2026-08-08，2026-08-10 确认全面转向）**: 存储全面转向 SQLite（modernc.org/sqlite），Neo4j+pgvector/Redis/MinIO 弃用；概念不变（边表=图、BLOB=向量）；新增能力只实现 SQLite 后端；旧后端代码保留兼容、不再投入、待清理
+
+## 最近工作（2026-08-10）— 存储战略确认 + 文档同步到 SQLite-only 真实状态
+
+- 用户确认"存储战略后续全面转向 SQLite"；同步 4 份文档 + agent_context：
+  - `docs/v0.1.1/00-storage-refactor-draft.md`：状态"草案"→"已实施"，3 个未决项定案（WAL 默认开、不建反向迁移工具、旧后端只兼容不投入），新增战略决策小节
+  - `docs/ROADMAP.md`：v0.1 基础设施交付物标注替代方案；数据留存策略重写为 SQLite 单库（LRU+WAL）；技术债备忘录标记失效项；新增"存储战略决策"小节
+  - `docs/DESIGN_PRINCIPLES.md`：头部加实现注记（基石正文不动，旧存储组件名按注记解读）
+  - `CLAUDE.md`：§4 技术栈改写（SQLite 为主存储，Go 1.25+）；§5 目录约定标注 db/ 与 neo4jpg 为弃用
+- 未动：`docs/v0.1/00-design.md`、`docs/v0.2/00-design.md`（历史定稿文档，保持原样）
 
 ## 最近工作（2026-08-09）— backlog issue #1 P0+P1 全部完成 + 合并 main
 

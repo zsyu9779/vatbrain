@@ -33,7 +33,7 @@ v0.1 ──── v0.2 ──── v0.3 ──── v1.0 ──── v1.x
 
 | 模块 | 内容 | 完成标准 |
 |-----|------|---------|
-| 基础设施 | Neo4j + pgvector + Redis + MinIO docker-compose | 一键启动，健康检查通过 |
+| 基础设施 | ~~Neo4j + pgvector + Redis + MinIO docker-compose~~ → 已由 SQLite 单文件替代（v0.1.1 存储重构，2026-08-08 战略决策） | 一键启动，健康检查通过 |
 | 数据模型 | EpisodicMemory / SemanticMemory 节点与边 | Schema 可执行 Cypher 创建 |
 | 写入链路 | 显著性门控 → 可分离性判别 → 复合写入 | 单条写入 < 200ms |
 | 权重引擎 | Recency-Weighted Frequency + 双参照衰减 + 冷却阈值 | 衰减曲线与预期误差 < 5% |
@@ -63,7 +63,7 @@ v0.1 ──── v0.2 ──── v0.3 ──── v1.0 ──── v1.x
 
 ### 关键风险
 - 睡眠整合中 LLM 提炼规则的质量不稳定 → 降低回测阈值至 0.6，人工 review 首批规则
-- pgvector IVFFlat 在大数据量下性能下降 → v0.1 数据量可控，v0.3 考虑迁移 Milvus
+- ~~pgvector IVFFlat 在大数据量下性能下降 → v0.3 考虑迁移 Milvus~~（已随存储战略转向失效，见下文）
 
 ---
 
@@ -210,20 +210,32 @@ v0.2 按 6 个 Phase 分步交付，3 次 commit：
 | 检索延迟（缓存 miss） | < 500ms | < 300ms | < 200ms |
 | 睡眠整合耗时 | < 5min | < 15min | < 30min（增量） |
 
-### 数据留存策略
+### 数据留存策略（2026-08-08 起：SQLite 单库承载全部层级）
 
-| 记忆类型 | v0.1 | v0.2+ | 冷却后处理 |
-|---------|------|-------|-----------|
-| 热记忆 | Redis | Redis | → pgvector 冷分区 |
-| 温记忆 | pgvector | pgvector | 正常衰减 |
-| 冷记忆 | pgvector 冷分区 | pgvector 冷分区 | 7 天后归档 MinIO |
-| 归档 | MinIO (Level 1) | MinIO (Level 1) | 90 天后可配置删除 |
+| 记忆类型 | 实现 | 冷却后处理 |
+|---------|------|-----------|
+| 热记忆 | SQLite（WAL）+ 进程内 LRU（golang-lru/v2） | 权重冷却移出热索引 |
+| 温记忆 | SQLite 主表（episodic/semantic/pitfall） | 正常衰减 |
+| 冷记忆 | SQLite 主表降权（低于冷却阈值不参与常规检索） | 显式触发才可见 |
+| 归档 | SQLite 文件快照 / 导出 | 按需保留或清理 |
+
+> 原 v0.1 的 Redis/pgvector/MinIO 分层已弃用。历史方案见 git 历史，不再维护。
 
 ### 技术债备忘录
 
-- pgvector 到 Milvus 的迁移点：单表 > 100K 向量或检索延迟 > 500ms 时启动
-- Neo4j 分片：单实例 > 1M 节点时考虑
+- ~~pgvector 到 Milvus 的迁移点~~（已失效：无 pgvector 后端）
+- ~~Neo4j 分片~~（已失效：无 Neo4j 后端）
+- SQLite 规模上限：单文件数据量大后考虑 WAL 检查点调优 / 分库分文件，切换点以实测检索延迟 > 300ms 为准
+- 旧后端代码（`internal/db/*`、`internal/store/neo4jpg`、go.mod 旧依赖）待清理
 - 睡眠整合从"定时"到"闲置检测"的切换点：积累足够的 Agent 活跃度数据后（v1.0+）
+
+### 存储战略决策（2026-08-08，2026-08-10 确认）
+
+- **决策**：Neo4j + pgvector 重型存储弃用，**全面转向 SQLite**（modernc.org/sqlite 纯 Go 驱动）。
+- **理由**：hermes 插件单进程部署目标；零容器依赖一键启动；单文件备份/迁移。
+- **概念不变**："图"由 `memory_edges`/`pitfall_edges` 边表表达（1-hop JOIN），"向量"由 `context_vector BLOB` + 进程内余弦相似度计算。
+- **执行规则**：新增能力只实现 SQLite 后端（Surprise Score、RuleConflictStore 均已遵循）；旧后端代码保留兼容、不再投入。
+- 详见 `docs/v0.1.1/00-storage-refactor-draft.md`（草案已升级为实施记录）。
 
 ---
 

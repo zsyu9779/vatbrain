@@ -1,5 +1,7 @@
 # VatBrain — Brain-Inspired Memory Architecture for AI Agents
 
+> 本文档为设计基石，只描述架构概念，不绑定实现。当前实现注记（2026-08-08 战略决策）：全部存储收敛于 SQLite 单文件——"图"以边表表达、"向量"以 BLOB + 进程内余弦相似度计算，Neo4j/pgvector/Redis/MinIO 后端已弃用（详见 `docs/v0.1.1/00-storage-refactor-draft.md`）。正文中的存储组件名（Neo4j、pgvector、Redis、MinIO、对象存储）请按此注记解读。
+
 ## 设计原理与指导思想
 
 ---

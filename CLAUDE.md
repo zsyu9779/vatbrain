@@ -64,15 +64,15 @@ Agent Context 规则：
 
 ### 4. 技术栈
 
-- 语言：Go 1.22+
-- HTTP 框架：go-chi/v5（待 Phase 3 引入）
-- 图数据库：Neo4j 5.x（neo4j-go-driver v5）
-- 向量数据库：pgvector/pg16（pgx v5 + pgvector-go）
-- 缓存：Redis（go-redis v9）
-- 对象存储：MinIO（minio-go v7）
-- 消息队列：Redis Streams / NATS
+- 语言：Go 1.25+（go.mod 锁定 1.25.5）
+- HTTP 框架：go-chi/v5
+- **主存储：SQLite（modernc.org/sqlite，纯 Go 无 CGO）**——单文件承载全部记忆数据，WAL 模式；"图"由 `memory_edges`/`pitfall_edges` 边表表达（1-hop JOIN），"向量"由 `context_vector BLOB` + 进程内余弦相似度计算；热缓存用进程内 LRU（golang-lru/v2）
+- ~~Neo4j 5.x / pgvector/pg16 / Redis / MinIO~~：**已弃用**（2026-08-08 战略决策，全面转向 SQLite）。旧后端代码 `internal/db/*`、`internal/store/neo4jpg` 仅保留兼容、不再投入
 - LLM：Claude API（HTTP 直调）
 - MCP 协议：MCP Server（对接 AI Agent）
+- 测试：standard `testing` + testify（与 §6 一致）
+
+> 设计概念（图+向量复合存储、多级存储）不变，实现统一收敛于 SQLite。详见 `docs/v0.1.1/00-storage-refactor-draft.md`。
 
 ### 5. 目录约定
 
@@ -94,11 +94,11 @@ vatbrain/
 ├── internal/
 │   ├── api/                     ← HTTP handlers
 │   ├── core/                    ← 核心引擎（权重/检索/整合）
-│   ├── db/                      ← 数据库连接层
-│   │   ├── neo4j/
-│   │   ├── pgvector/
-│   │   ├── redis/
-│   │   └── minio/
+│   ├── db/                      ← 旧后端连接层（neo4j/pgvector/redis/minio，已弃用，待清理）
+│   ├── store/
+│   │   ├── sqlite/              ← 主存储后端（唯一投入路径）
+│   │   ├── memory/              ← 纯内存后端（测试用）
+│   │   └── neo4jpg/             ← 旧后端实现（已弃用，待清理）
 │   ├── models/                  ← 数据模型
 │   └── mcp/                     ← MCP Server
 ├── tests/

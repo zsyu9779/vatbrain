@@ -1,8 +1,10 @@
 # VatBrain v0.1.1 — 存储层可插拔重构草案
 
-> 状态：**技术调研草案**
+> 状态：**已实施（SQLite 为唯一投入路径）**
 >
 > 起草时间：2026-04-29
+>
+> 2026-08-08 战略决策：Neo4j+pgvector 重型存储弃用，本草案设计的 SQLite 路径从"可选后端之一"升级为**唯一投入路径**（2026-08-10 确认全面转向）。下文"未决项"已全部定案。
 >
 > 前置阅读：
 > - `docs/DESIGN_PRINCIPLES.md` — 设计基石
@@ -547,11 +549,20 @@ PR-6: 现有 DB 代码迁移
 | Cypher → SQL 语义差异 | 1-hop 查询用 JOIN 等价实现，多跳查询在实现层标记 `TODO` |
 | 接口膨胀 | 先按 Phase 1 定义最小接口，实践 2 周后再补缺失方法 |
 
-### 未决项
+### 未决项（2026-08-10 全部定案）
 
-- 是否需要在 v0.1.1 同时支持 Neo4j+pgvector 后端？（建议：是，保持向后兼容）
-- SQLite 是否需要默认开启 WAL 模式？（建议：默认开启）
-- 是否需要数据迁移工具——从 SQLite 升到 Neo4j+pgvector？（建议：后续版本考虑）
+| 未决项 | 定案 | 说明 |
+|--------|------|------|
+| 是否同时支持 Neo4j+pgvector 后端 | 保留兼容，不再投入 | 代码保留（`internal/db/*`、`internal/store/neo4jpg`），不新增能力，待清理 |
+| SQLite 是否默认开启 WAL | ✅ 默认开启 | `enableWAL()` 已实现（`internal/store/sqlite/schema.go`） |
+| SQLite → Neo4j+pgvector 迁移工具 | 不需要 | 迁移方向已反转：如未来数据规模超出单文件，走 SQLite 文件分片/快照，而非换回重型后端 |
+
+### 战略决策（2026-08-08，2026-08-10 确认）
+
+- **决策**：全面转向 SQLite（modernc.org/sqlite 纯 Go 驱动，零 CGO/零外部依赖）。
+- **理由**：hermes 插件以单进程部署为目标；一键启动、单文件备份/迁移、无容器依赖。
+- **概念不变**："图"由 `memory_edges`/`pitfall_edges` 边表表达（1-hop JOIN），"向量"由 `context_vector BLOB` + 进程内余弦相似度计算。
+- **执行规则**：新增能力只实现 SQLite 后端（如 Surprise Score、ConflictResolver 的 `RuleConflictStore` 均仅 SQLite/memory 实现）；旧后端代码不再接收任何改动。
 
 ---
 
