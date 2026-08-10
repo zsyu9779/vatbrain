@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-08-10 — v0.4 ticket 02:时序记忆最小深入(occurred_at + 时间检索)✅
+
+- **worktree**: `/tmp/v0.4-wt-02`(分支 `v0.4/ticket-02`,基于 2d7c2df = ticket 01 合入点)。实现 + 测试 + commit 全部在该 worktree,未触碰主仓库
+- **时间属性**: `episodic_memories.occurred_at TEXT` 列(v0.4 迁移:ALTER + 回填 created_at + `idx_episodic_occurred` 索引,幂等);`EpisodicMemory.OccurredAt`(零值回退 CreatedAt,`EffectiveOccurredAt()`);写管线 `WriteEvent.OccurredAt` 透传(WriteMemory 与 WriteMemoryWithEmbedding 双路径,无显式时间回退写入时刻;merge 保留原发生时间)
+- **时间检索**: `EpisodicSearchRequest.OccurredAfter/OccurredBefore/SortByOccurredAt`(含 embed 路径;时间排序优先于余弦;时间查询旁路 hot cache);provider `ParseRelativeTime`(上周/昨天窗口 + 最近一次/最新 时间排序,中英双语);`EpisodicScanItem.OccurredAt` 供词法回退路径过滤
+- **兼容层保留**: bench `datePrefixedContent` 的 `[YYYY-MM-DD]` 摘要前缀不动;chat_time 解析抽为 `parseChatTime` 共享,`eventFor` 同时设 OccurredAt
+- **测试**: 迁移回填+幂等、读写回环+回退、过滤/排序(结构化+embed 路径+缓存旁路)、双写路径透传、ParseRelativeTime 9 用例、provider 集成(embed/词法双路径)、bench 端到端——全绿;全量测试除已知 docker 依赖(neo4j/pgvector smoke+e2e)外通过
+- **范围约束遵守**: 未动 provider 协议签名(MCP/api/JSON-RPC 无变化);neo4jpg 旧后端仅不持久化新字段(弃用,不投入)
+- **待办**: 评测验证在 ticket 06 收口(LoCoMo Temporal 15% / LME 52.6% 回升预期)
+
+---
+
 ## 2026-08-10 — v0.4 ticket 01:bench 基建(并发 ingestion + 延迟微基准)✅
 
 - **worktree**: `/tmp/v0.4-wt-01`(分支 `v0.4/ticket-01`,基于 c9cd9b1)。实现 + 测试 + commit 全部在该 worktree,未触碰主仓库

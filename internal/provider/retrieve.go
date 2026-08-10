@@ -213,6 +213,14 @@ func RetrievePitfalls(ctx context.Context, deps core.WriteDeps, projectID, query
 // FormatPrefetch renders episodes + pitfalls into the plain-text recall block
 // hermes wraps in <memory-context>. Pitfalls use the §6 risk-advisory shape.
 func FormatPrefetch(episodes []models.EpisodicMemory, pitfalls []models.PitfallMemory) string {
+	return formatPrefetch(episodes, pitfalls)
+}
+
+// formatPrefetch is the shared recall-block renderer. The condensation path
+// (FormatPrefetchCondensed) formats the same shape after suppression/trimming,
+// so the common case (no duplicates, budget not hit) is byte-identical to the
+// plain format — a regression guard in condense_test.go.
+func formatPrefetch(episodes []models.EpisodicMemory, pitfalls []models.PitfallMemory) string {
 	var b strings.Builder
 
 	if len(episodes) > 0 {

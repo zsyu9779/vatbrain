@@ -392,7 +392,12 @@ func (s *Server) takePrefetch(sessionID string) (string, bool) {
 	return text, ok
 }
 
-// buildPrefetch retrieves episodes + pitfalls for a query and formats them.
+// buildPrefetch retrieves episodes + pitfalls for a query and formats them
+// through the condensation path (ticket 08): near-duplicate restatements are
+// suppressed and the injected context is measured against the token budget,
+// so the <memory-context> block stays under the efficiency-axis cap. With no
+// duplicates and a quiet budget the output is byte-identical to the plain
+// format (condense_test.go regression guard).
 func (s *Server) buildPrefetch(ctx context.Context, projectID, query string) string {
 	if strings.TrimSpace(query) == "" {
 		return ""
@@ -405,7 +410,14 @@ func (s *Server) buildPrefetch(ctx context.Context, projectID, query string) str
 	if err != nil {
 		slog.Warn("provider: prefetch pitfall retrieval failed", "err", err)
 	}
-	return FormatPrefetch(episodes, pitfalls)
+	text, stats := FormatPrefetchCondensed(episodes, pitfalls, DefaultCondenseOptions())
+	slog.Debug("provider: prefetch condensed",
+		"in_tokens", stats.InputTokens, "out_tokens", stats.OutputTokens,
+		"episodes", stats.EpisodesIn, "episodes_out", stats.EpisodesOut,
+		"suppressed_episodes", stats.SuppressedEpisodes,
+		"suppressed_pitfalls", stats.SuppressedPitfalls,
+		"budget_hit", stats.BudgetHit)
+	return text
 }
 
 func (s *Server) sessionFor(sessionID string) (*sessionState, bool) {
