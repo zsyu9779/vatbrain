@@ -17,12 +17,12 @@ import (
 // Sentinel errors from WriteMemory so callers can distinguish configuration
 // failures from transient I/O failures.
 var (
-	errWritePipelineNoGate   = errors.New("write pipeline: significance gate is nil")
-	errWritePipelineNoStore  = errors.New("write pipeline: store is nil")
-	errWritePipelineEmbed    = errors.New("write pipeline: embedding failed")
-	errWritePipelineSearch   = errors.New("write pipeline: similarity search failed")
-	errWritePipelinePersist  = errors.New("write pipeline: persistence failed")
-	errWritePipelinePatternSep = errors.New("write pipeline: pattern separation engine is nil")
+	errWritePipelineNoGate      = errors.New("write pipeline: significance gate is nil")
+	errWritePipelineNoStore     = errors.New("write pipeline: store is nil")
+	errWritePipelineEmbed       = errors.New("write pipeline: embedding failed")
+	errWritePipelineSearch      = errors.New("write pipeline: similarity search failed")
+	errWritePipelinePersist     = errors.New("write pipeline: persistence failed")
+	errWritePipelinePatternSep  = errors.New("write pipeline: pattern separation engine is nil")
 	errWritePipelineWeightDecay = errors.New("write pipeline: weight decay engine is nil")
 )
 
@@ -217,6 +217,14 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 		existing.Summary = existing.Summary + "\n" + event.Summary
 		existing.Weight = newWeight
 		existing.LastAccessedAt = &now
+		// OccurredAt keeps the story anchor: on a pattern-separation append
+		// the memory retains its original event time (the appended summary is
+		// usually a restatement of the same event) — unless the incoming
+		// event explicitly predates it, in which case the anchor moves
+		// earlier so temporal reasoning still sees the story's start.
+		if !event.OccurredAt.IsZero() && event.OccurredAt.Before(existing.EffectiveOccurredAt()) {
+			existing.OccurredAt = event.OccurredAt
+		}
 		if event.IsCorrection {
 			existing.IsCorrection = true
 		}
@@ -242,6 +250,13 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 	now := time.Now()
 	effFreq, weight := deps.WeightDecay.ComputeFull([]time.Time{now}, now, now)
 
+	// Temporal attribute: carry the event's explicit time through; when the
+	// write path had none (zero), fall back to the write time.
+	occurredAt := event.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = now
+	}
+
 	mem := &models.EpisodicMemory{
 		ID:                 memoryID,
 		ProjectID:          projectID,
@@ -257,6 +272,7 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 		ContextVector:      embedding,
 		IsCorrection:       event.IsCorrection,
 		SurpriseScore:      surprise,
+		OccurredAt:         occurredAt,
 	}
 
 	if err := deps.Store.WriteEpisodic(ctx, mem); err != nil {

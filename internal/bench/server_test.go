@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -524,4 +525,57 @@ func TestBench_Add_ConcurrentIngest_OptionsPlumbed(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusOK, code)
 	assert.Equal(t, float64(5), out["persisted"])
+}
+
+func TestBench_EventFor_CarriesOccurredAt(t *testing.T) {
+	st := memory.NewStore()
+	deps := core.WriteDeps{
+		Store:       st,
+		Gate:        core.DefaultSignificanceGate(),
+		PatternSep:  core.DefaultPatternSeparation(),
+		WeightDecay: core.DefaultWeightDecayEngine(),
+		Embedder:    embedder.NewKeywordEmbedder(models.DefaultEmbeddingDim),
+		WorkingMem:  store.NewWorkingMemoryBuffer(20),
+	}
+	want := time.Date(2029, 5, 4, 10, 0, 0, 0, time.UTC)
+
+	// GateModeOff: parseable chat_time → the event carries OccurredAt so the
+	// pipeline persists a structured time instead of only the text prefix.
+	srvOff, err := NewServer(deps, Options{GateMode: GateModeOff})
+	require.NoError(t, err)
+	ev := srvOff.eventFor("Alice got a shell necklace", "2029-05-04T10:00:00Z")
+	assert.True(t, ev.OccurredAt.Equal(want),
+		"GateModeOff event must carry OccurredAt, got %v", ev.OccurredAt)
+	assert.Contains(t, ev.Summary, "[2029-05-04]", "date prefix compatibility layer must remain")
+
+	// GateModeOn: the DeriveWriteEvent path must carry OccurredAt too.
+	srvOn, err := NewServer(deps, Options{GateMode: GateModeOn})
+	require.NoError(t, err)
+	evOn := srvOn.eventFor("actually it should be blue not red", "2029-05-04T10:00:00Z")
+	assert.True(t, evOn.OccurredAt.Equal(want),
+		"GateModeOn event must carry OccurredAt, got %v", evOn.OccurredAt)
+
+	// Unparseable or empty chat_time → zero OccurredAt (pipeline falls back
+	// to CreatedAt); the event still survives.
+	evBad := srvOff.eventFor("no time here", "not-a-date")
+	assert.True(t, evBad.OccurredAt.IsZero(), "unparseable chat_time must leave OccurredAt zero")
+	evEmpty := srvOff.eventFor("no time here", "")
+	assert.True(t, evEmpty.OccurredAt.IsZero(), "empty chat_time must leave OccurredAt zero")
+
+	// End-to-end: /v1/add with chat_time persists OccurredAt into the store.
+	ts := httptest.NewServer(srvOff.Routes())
+	defer ts.Close()
+	code, _ := postJSON(t, ts.URL+"/v1/add", `{
+		"user_id": "u1",
+		"messages": [
+			{"role": "user", "content": "Carol adopted a beagle puppy", "chat_time": "2029-05-04T10:00:00Z"}
+		]
+	}`)
+	require.Equal(t, http.StatusOK, code)
+
+	items, err := st.ScanRecent(context.Background(), time.Time{}, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, items)
+	assert.True(t, items[0].OccurredAt.Equal(want),
+		"persisted memory must carry the chat_time as occurred_at, got %v", items[0].OccurredAt)
 }

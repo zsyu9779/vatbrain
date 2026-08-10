@@ -32,6 +32,18 @@ type EpisodicSearchRequest struct {
 	// above otherwise-equal peers. 0 (default) leaves ranking unchanged, so
 	// existing callers see identical behavior.
 	SurpriseBoost float64
+
+	// OccurredAfter, when non-zero, keeps only memories whose occurred_at is
+	// >= this time (inclusive). Zero disables the lower bound.
+	OccurredAfter time.Time
+	// OccurredBefore, when non-zero, keeps only memories whose occurred_at is
+	// <= this time (inclusive). Zero disables the upper bound.
+	OccurredBefore time.Time
+	// SortByOccurredAt, when true, orders results by occurred_at descending
+	// (most recent first) instead of the default relevance ranking — the
+	// "最近一次" (most recent) semantic. It also disables the hot cache:
+	// time-ordered results are inherently freshness-sensitive.
+	SortByOccurredAt bool
 }
 
 // SemanticSearchRequest carries filters and an optional embedding for semantic
@@ -73,6 +85,9 @@ type EpisodicScanItem struct {
 	EntityID     string // v0.2: code entity anchor for Pitfall clustering
 	Weight       float64
 	LastAccessed time.Time
+	// OccurredAt is when the event happened (v0.4 temporal attribute),
+	// falling back to CreatedAt for memories without an explicit time.
+	OccurredAt time.Time
 }
 
 // Edge represents a directed relationship between two memory nodes.

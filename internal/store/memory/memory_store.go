@@ -82,6 +82,15 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 		if !req.IncludeObsolete && m.ObsoletedAt != nil {
 			continue
 		}
+		// v0.4 temporal window: keep memories whose occurred_at falls inside
+		// [OccurredAfter, OccurredBefore] (inclusive). Memories without an
+		// explicit occurrence time fall back to CreatedAt.
+		if !req.OccurredAfter.IsZero() && m.EffectiveOccurredAt().Before(req.OccurredAfter) {
+			continue
+		}
+		if !req.OccurredBefore.IsZero() && m.EffectiveOccurredAt().After(req.OccurredBefore) {
+			continue
+		}
 		candidates = append(candidates, *m)
 	}
 
@@ -113,6 +122,15 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 		if limit > len(results) {
 			limit = len(results)
 		}
+		results = results[:limit]
+		if req.SortByOccurredAt {
+			// Rank-then-sort ("最近一次"): among the top-limit relevant
+			// memories, order by occurred_at descending so the most recent of
+			// the relevant set surfaces first.
+			sort.Slice(results, func(i, j int) bool {
+				return results[i].mem.EffectiveOccurredAt().After(results[j].mem.EffectiveOccurredAt())
+			})
+		}
 		result := make([]models.EpisodicMemory, limit)
 		for i := range limit {
 			result[i] = results[i].mem
@@ -120,15 +138,23 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 		return result, nil
 	}
 
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].Weight != candidates[j].Weight {
-			return candidates[i].Weight > candidates[j].Weight
-		}
-		if candidates[i].LastAccessedAt != nil && candidates[j].LastAccessedAt != nil {
-			return candidates[i].LastAccessedAt.After(*candidates[j].LastAccessedAt)
-		}
-		return candidates[i].CreatedAt.After(candidates[j].CreatedAt)
-	})
+	if req.SortByOccurredAt {
+		// Time sort: most recent first, independent of relevance/weight — the
+		// structured "最近一次" semantic (no relevance signal to rank by).
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].EffectiveOccurredAt().After(candidates[j].EffectiveOccurredAt())
+		})
+	} else {
+		sort.Slice(candidates, func(i, j int) bool {
+			if candidates[i].Weight != candidates[j].Weight {
+				return candidates[i].Weight > candidates[j].Weight
+			}
+			if candidates[i].LastAccessedAt != nil && candidates[j].LastAccessedAt != nil {
+				return candidates[i].LastAccessedAt.After(*candidates[j].LastAccessedAt)
+			}
+			return candidates[i].CreatedAt.After(candidates[j].CreatedAt)
+		})
+	}
 
 	limit := req.Limit
 	if limit <= 0 {
@@ -313,6 +339,7 @@ func (s *Store) ScanRecent(_ context.Context, since time.Time, limit int) ([]sto
 			EntityID:     m.EntityGroup,
 			Weight:       m.Weight,
 			LastAccessed: la,
+			OccurredAt:   m.EffectiveOccurredAt(),
 		})
 	}
 

@@ -379,3 +379,13 @@
 - 插件 `shutdown()` 时后台 sync 线程可能未完成（best-effort，短会话实测能存活）。
 - hermes 条目编辑会因内容哈希变化被当作新条目入库（watcher 语义）。
 
+
+---
+
+## 2026-08-10 — issue #1 状态同步（checkbox 2/20 → 8/20）
+
+- 发现 issue #1 滞后于代码库（agent_context 曾声称"checkbox 已勾选"，实际仅 2/20）。核对代码证据后同步：
+  - 新勾选 5 项：v0.4 Public Developer Experience、v0.3 反馈闭环（ProtectionLevel）、v0.2.1 Watcher GA、v0.3.1 评测增强+报告、模块复杂度纳入风险评分
+  - 标废弃 1 项：SQLite→Neo4j+pgvector 迁移工具（存储战略转向后无需求）
+  - 性能基准套件：留 [ ]，注记"OmniMemEval 质量评测已落地，延迟微基准未单独做"
+- 剩余 12 项未勾：P2 六件套（反事实推理/压缩残差/自适应衰减/多级存储/冷分层/情境向量）、P3（Team Memory/v1.x/明确暂缓）、技术债 3 项

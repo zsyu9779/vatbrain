@@ -181,6 +181,25 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// v0.4 temporal attribute (ticket 02): when the event happened. The column
+	// and index live outside schemaSQL so existing databases — whose
+	// episodic_memories predates the column — migrate in-place (an index on a
+	// missing column inside schemaSQL would fail before the ALTER runs).
+	if _, err := db.Exec(`ALTER TABLE episodic_memories
+		ADD COLUMN occurred_at TEXT`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("sqlite migrate occurred_at: %w", err)
+	}
+	// Backfill: events written before occurred_at existed occurred at write
+	// time. Idempotent — only fills rows still missing the value.
+	if _, err := db.Exec(`UPDATE episodic_memories
+		SET occurred_at = created_at WHERE occurred_at IS NULL`); err != nil {
+		return fmt.Errorf("sqlite migrate occurred_at backfill: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_episodic_occurred
+		ON episodic_memories(occurred_at DESC)`); err != nil {
+		return fmt.Errorf("sqlite migrate occurred_at index: %w", err)
+	}
+
 	return nil
 }
 

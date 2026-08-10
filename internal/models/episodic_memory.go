@@ -35,6 +35,20 @@ type EpisodicMemory struct {
 	// retain a longer half-life on the decay curve, up to
 	// (1 + SurpriseHalfLifeBoost × surprise) times. Range [0, 1].
 	SurpriseScore float64 `json:"surprise_score"`
+	// OccurredAt is when the event happened, carried through from the source
+	// message's chat_time (v0.4 temporal attribute). Zero means no explicit
+	// time was provided; EffectiveOccurredAt falls back to CreatedAt then.
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+// EffectiveOccurredAt returns when the event happened: OccurredAt when set,
+// falling back to CreatedAt for memories written before the temporal
+// attribute existed or through paths that carry no explicit time.
+func (m EpisodicMemory) EffectiveOccurredAt() time.Time {
+	if m.OccurredAt.IsZero() {
+		return m.CreatedAt
+	}
+	return m.OccurredAt
 }
 
 // PrecedesEdge represents a [:PRECEDES] relationship between episodic memories.

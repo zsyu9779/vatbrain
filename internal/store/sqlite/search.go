@@ -3,7 +3,9 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
@@ -30,8 +32,14 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Time-filtered / time-sorted queries bypass the hot cache: their result
+	// is inherently freshness-sensitive, and the window bounds change on every
+	// call, so caching would serve stale windows.
+	timeConstrained := !req.OccurredAfter.IsZero() ||
+		!req.OccurredBefore.IsZero() || req.SortByOccurredAt
+
 	// Check hot cache for non-embedding queries
-	if req.Embedding == nil {
+	if req.Embedding == nil && !timeConstrained {
 		cacheKey := fmt.Sprintf("ep:%s:%s:%s:%v:%d", req.ProjectID, req.Language, req.TaskType, req.IncludeObsolete, req.Limit)
 		if cached, ok := s.hotCache.Get(cacheKey); ok {
 			return cached, nil
@@ -60,19 +68,41 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 	if !req.IncludeObsolete {
 		where = append(where, "obsoleted_at IS NULL")
 	}
+	// v0.4 temporal window: occurred_at is stored as UTC RFC3339 text (same
+	// formatting as the write path), so lexicographic comparison is
+	// chronological. Bounds are inclusive.
+	if !req.OccurredAfter.IsZero() {
+		where = append(where, "occurred_at >= ?")
+		args = append(args, req.OccurredAfter.UTC().Format(time.RFC3339))
+	}
+	if !req.OccurredBefore.IsZero() {
+		where = append(where, "occurred_at <= ?")
+		args = append(args, req.OccurredBefore.UTC().Format(time.RFC3339))
+	}
 
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10
 	}
+	// SortByOccurredAt orders results by event time (most recent first) —
+	// "最近一次" semantics. On the structured path it becomes the SQL order;
+	// on the embedding/surprise paths the SQL order is irrelevant (Go
+	// re-ranks), so the time preference is applied after ranking: rank-then-
+	// sort, top-K relevant ordered by occurred_at descending.
+	orderBy := "weight DESC"
+	if req.SortByOccurredAt {
+		orderBy = "occurred_at DESC"
+	}
+	// goRanking is true when cosine/surprise ranking must happen in Go: the
+	// SQL layer then fetches a generous candidate pool for local re-ranking.
+	goRanking := req.Embedding != nil || req.SurpriseBoost > 0
 	fetchLimit := limit
-	if req.Embedding != nil || req.SurpriseBoost > 0 {
-		// Cosine/surprise ranking happens in Go, so the SQL layer must fetch a
-		// generous candidate pool and re-rank locally. The old limit*5 (capped
-		// at 500) was too small: with near-uniform weights (e.g. a freshly
-		// ingested benchmark user), `ORDER BY weight DESC` selects an arbitrary
-		// subset and the true best-embedding match can fall outside the pool —
-		// which pinned pinpoint-fact recall at ~10% on HaluMem.
+	if goRanking {
+		// The old limit*5 (capped at 500) was too small: with near-uniform
+		// weights (e.g. a freshly ingested benchmark user), `ORDER BY weight
+		// DESC` selects an arbitrary subset and the true best-embedding match
+		// can fall outside the pool — which pinned pinpoint-fact recall at
+		// ~10% on HaluMem.
 		fetchLimit = embeddingRankPool
 	}
 
@@ -80,12 +110,12 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 		SELECT id, project_id, language, task_type, summary, source_type,
 		       trust_level, weight, effective_frequency, entity_group,
 		       context_vector, full_snapshot_uri, is_correction, surprise_score,
-		       created_at, last_accessed_at, obsoleted_at
+		       created_at, last_accessed_at, obsoleted_at, occurred_at
 		FROM episodic_memories
 		WHERE %s
-		ORDER BY weight DESC
+		ORDER BY %s
 		LIMIT ?
-	`, strings.Join(where, " AND "))
+	`, strings.Join(where, " AND "), orderBy)
 
 	args = append(args, fetchLimit)
 	rows, err := s.db.Query(query, args...)
@@ -101,7 +131,7 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 
 	var results []models.EpisodicMemory
 
-	if req.Embedding != nil && len(candidates) > 0 {
+	if req.Embedding != nil && len(candidates) > 0 && goRanking {
 		var ranked []scoredEpisodic
 		for _, m := range candidates {
 			if len(m.ContextVector) == 0 {
@@ -124,15 +154,8 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 		}
 
 		sortScoredEpisodics(ranked)
-
-		if limit > len(ranked) {
-			limit = len(ranked)
-		}
-		results = make([]models.EpisodicMemory, limit)
-		for i := range limit {
-			results[i] = ranked[i].mem
-		}
-	} else if req.SurpriseBoost > 0 {
+		results = topScoredEpisodics(ranked, limit, req.SortByOccurredAt)
+	} else if goRanking {
 		// Weighted surprise ranking: order by weight × surprise factor so
 		// prediction-error memories surface above otherwise-equal peers.
 		var ranked []scoredEpisodic
@@ -143,14 +166,10 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 			})
 		}
 		sortScoredEpisodics(ranked)
-		if limit > len(ranked) {
-			limit = len(ranked)
-		}
-		results = make([]models.EpisodicMemory, limit)
-		for i := range limit {
-			results[i] = ranked[i].mem
-		}
+		results = topScoredEpisodics(ranked, limit, req.SortByOccurredAt)
 	} else {
+		// Either no Go-side ranking (plain weight/occurred_at SQL order) or a
+		// time-sorted query whose SQL order already decided the sequence.
 		if limit > len(candidates) {
 			limit = len(candidates)
 		}
@@ -158,7 +177,7 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 	}
 
 	// Populate hot cache for non-embedding queries
-	if req.Embedding == nil {
+	if req.Embedding == nil && !timeConstrained {
 		cacheKey := fmt.Sprintf("ep:%s:%s:%s:%v:%d", req.ProjectID, req.Language, req.TaskType, req.IncludeObsolete, req.Limit)
 		s.hotCache.Set(cacheKey, results)
 	}
@@ -207,6 +226,27 @@ func (s *Store) SearchSemantic(_ context.Context, req store.SemanticSearchReques
 	defer rows.Close()
 
 	return scanSemanticRows(rows)
+}
+
+// topScoredEpisodics truncates a relevance-ranked slice to the top limit and,
+// when timeSorted ("最近一次" semantics), re-orders that slice by occurred_at
+// descending so the most recent of the relevant memories surface first —
+// rank-then-sort, matching the lexical fallback path in the provider.
+func topScoredEpisodics(ranked []scoredEpisodic, limit int, timeSorted bool) []models.EpisodicMemory {
+	if limit > len(ranked) {
+		limit = len(ranked)
+	}
+	ranked = ranked[:limit]
+	if timeSorted {
+		sort.Slice(ranked, func(i, j int) bool {
+			return ranked[i].mem.EffectiveOccurredAt().After(ranked[j].mem.EffectiveOccurredAt())
+		})
+	}
+	results := make([]models.EpisodicMemory, limit)
+	for i := range limit {
+		results[i] = ranked[i].mem
+	}
+	return results
 }
 
 // sortScoredEpisodics sorts scored items by cosine similarity descending,

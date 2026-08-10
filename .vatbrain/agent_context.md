@@ -12,6 +12,16 @@
 - **hermes**: `~/.hermes/hermes-agent`（HEAD 52920747e）+ 插件 `~/.hermes/plugins/vatbrain/` 已激活（config.yaml memory.provider: vatbrain）
 - **战略决策（2026-08-08，2026-08-10 确认全面转向）**: 存储全面转向 SQLite（modernc.org/sqlite），Neo4j+pgvector/Redis/MinIO 弃用；概念不变（边表=图、BLOB=向量）；新增能力只实现 SQLite 后端；旧后端代码保留兼容、不再投入、待清理
 
+## 最近工作（2026-08-10）— v0.4 ticket 02:时序记忆最小深入(occurred_at + 时间检索)✅
+
+- **worktree**: `/tmp/v0.4-wt-02`(分支 `v0.4/ticket-02`,基于 2d7c2df = ticket 01 合入点)。实现 + 测试 + commit 全部在该 worktree,未触碰主仓库
+- **时间属性**: `episodic_memories.occurred_at TEXT` 列(v0.4 迁移:ALTER + 回填 created_at + `idx_episodic_occurred` 索引,幂等);`EpisodicMemory.OccurredAt`(零值回退 CreatedAt,`EffectiveOccurredAt()`);写管线 `WriteEvent.OccurredAt` 透传(WriteMemory 与 WriteMemoryWithEmbedding 双路径,无显式时间回退写入时刻;merge 保留原发生时间)
+- **时间检索**: `EpisodicSearchRequest.OccurredAfter/OccurredBefore/SortByOccurredAt`(含 embed 路径;时间排序优先于余弦;时间查询旁路 hot cache);provider `ParseRelativeTime`(上周/昨天窗口 + 最近一次/最新 时间排序,中英双语);`EpisodicScanItem.OccurredAt` 供词法回退路径过滤
+- **兼容层保留**: bench `datePrefixedContent` 的 `[YYYY-MM-DD]` 摘要前缀不动;chat_time 解析抽为 `parseChatTime` 共享,`eventFor` 同时设 OccurredAt
+- **测试**: 迁移回填+幂等、读写回环+回退、过滤/排序(结构化+embed 路径+缓存旁路)、双写路径透传、ParseRelativeTime 9 用例、provider 集成(embed/词法双路径)、bench 端到端——全绿;全量测试除已知 docker 依赖(neo4j/pgvector smoke+e2e)外通过
+- **范围约束遵守**: 未动 provider 协议签名(MCP/api/JSON-RPC 无变化);neo4jpg 旧后端仅不持久化新字段(弃用,不投入)
+- **待办**: 评测验证在 ticket 06 收口(LoCoMo Temporal 15% / LME 52.6% 回升预期)
+
 ## 最近工作（2026-08-10）— v0.4 ticket 01:bench 基建(并发 ingestion + 延迟微基准)✅
 
 - **worktree**: `/tmp/v0.4-wt-01`(分支 `v0.4/ticket-01`,基于 c9cd9b1)。实现 + 测试 + commit 全部在该 worktree,未触碰主仓库
@@ -30,12 +40,4 @@
 - 决策定案（用户确认 4 项）：定位=评测驱动精修 ✅；Agent 轨二轮域=同题不同 seed（先）+ 代码修补场景（后）；时序=最小深入（occurred_at 列 + 检索排序，不动 provider 协议）；反事实=P2 等数据
 - `docs/v0.4/00-draft.md` 状态"草案"→"已定案"，§11 决策记录已更新
 - 未提交 benchmark 测试结果（后台 bmdoe0tuy 运行中）
-
-## 最近工作（2026-08-10）— issue #1 状态同步（checkbox 2/20 → 8/20）
-
-- 发现 issue #1 滞后于代码库（agent_context 曾声称"checkbox 已勾选"，实际仅 2/20）。核对代码证据后同步：
-  - 新勾选 5 项：v0.4 Public Developer Experience、v0.3 反馈闭环（ProtectionLevel）、v0.2.1 Watcher GA、v0.3.1 评测增强+报告、模块复杂度纳入风险评分
-  - 标废弃 1 项：SQLite→Neo4j+pgvector 迁移工具（存储战略转向后无需求）
-  - 性能基准套件：留 [ ]，注记"OmniMemEval 质量评测已落地，延迟微基准未单独做"
-- 剩余 12 项未勾：P2 六件套（反事实推理/压缩残差/自适应衰减/多级存储/冷分层/情境向量）、P3（Team Memory/v1.x/明确暂缓）、技术债 3 项
 

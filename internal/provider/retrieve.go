@@ -36,30 +36,40 @@ var entityRefRe = regexp.MustCompile(`@?[\w./-]+\.(go|proto|ts|tsx|js|py|java|rs
 // hermes MemoryManager wraps it in the <memory-context> fence — providers
 // never emit the fence themselves (§5.3).
 type PrefetchContext struct {
-	Episodes   []models.EpisodicMemory
-	Pitfalls   []models.PitfallMemory
+	Episodes []models.EpisodicMemory
+	Pitfalls []models.PitfallMemory
 }
 
 // RetrieveEpisodic finds the episodic memories most relevant to query within
 // a project. Uses embedding cosine when the embedder yields a signal
 // (CJK-safe, per F1); otherwise a character-bigram overlap score that also
-// handles Chinese.
+// handles Chinese. Relative-time expressions in the query ("上周", "last
+// week", "最近一次", "most recent") narrow the result to the implied
+// occurred_at window and/or order results newest-first (ParseRelativeTime).
 func RetrieveEpisodic(ctx context.Context, deps core.WriteDeps, projectID, query string, limit int) ([]models.EpisodicMemory, error) {
 	if limit <= 0 {
 		limit = episodicResultLimit
 	}
 
+	window := ParseRelativeTime(query, time.Now())
+
 	emb, err := deps.Embedder.Embed(ctx, query)
 	if err == nil && hasVectorMagnitude(emb) {
 		return deps.Store.SearchEpisodic(ctx, store.EpisodicSearchRequest{
-			ProjectID:     projectID,
-			Embedding:     vector.Float32To64(emb),
-			Limit:         limit,
-			SurpriseBoost: surpriseRankingBoost,
+			ProjectID:        projectID,
+			Embedding:        vector.Float32To64(emb),
+			Limit:            limit,
+			SurpriseBoost:    surpriseRankingBoost,
+			OccurredAfter:    window.After,
+			OccurredBefore:   window.Before,
+			SortByOccurredAt: window.SortNewest,
 		})
 	}
 
-	// Lexical fallback: score recent episodes by query overlap.
+	// Lexical fallback: score recent episodes by query overlap. The temporal
+	// window narrows the pool (ScanRecent carries occurred_at) and, for
+	// "最近一次" queries, the relevant top-k are ordered by occurred_at
+	// descending — the same rank-then-sort semantics as the embedding path.
 	items, err := deps.Store.ScanRecent(ctx, time.Time{}, episodicCandidatePool)
 	if err != nil {
 		return nil, err
@@ -75,27 +85,51 @@ func RetrieveEpisodic(ctx context.Context, deps core.WriteDeps, projectID, query
 		if projectID != "" && item.ProjectID != projectID {
 			continue
 		}
+		if !window.After.IsZero() && item.OccurredAt.Before(window.After) {
+			continue
+		}
+		if !window.Before.IsZero() && item.OccurredAt.After(window.Before) {
+			continue
+		}
 		if _, ok := seen[item.ID.String()]; ok {
 			continue
 		}
 		seen[item.ID.String()] = struct{}{}
 		pool = append(pool, scored{mem: models.EpisodicMemory{
-			ID:        item.ID,
-			ProjectID: item.ProjectID,
-			Language:  item.Language,
-			TaskType:  item.TaskType,
-			Summary:   item.Summary,
-			Weight:    item.Weight,
+			ID:         item.ID,
+			ProjectID:  item.ProjectID,
+			Language:   item.Language,
+			TaskType:   item.TaskType,
+			Summary:    item.Summary,
+			Weight:     item.Weight,
+			OccurredAt: item.OccurredAt,
 		}, score: bigramOverlap(query, item.Summary)})
 	}
 
-	sort.Slice(pool, func(i, j int) bool { return pool[i].score > pool[j].score })
+	// Relevance gate: only overlapping items are candidates.
+	var relevant []scored
+	for _, s := range pool {
+		if s.score > 0 {
+			relevant = append(relevant, s)
+		}
+	}
+	sort.Slice(relevant, func(i, j int) bool { return relevant[i].score > relevant[j].score })
+	if window.SortNewest {
+		// Rank-then-sort: among the top-limit relevant memories, order by
+		// occurred_at descending so "最近一次" surfaces the most recent of the
+		// relevant set.
+		top := limit
+		if top > len(relevant) {
+			top = len(relevant)
+		}
+		topRelevant := relevant[:top]
+		sort.Slice(topRelevant, func(i, j int) bool {
+			return topRelevant[i].mem.EffectiveOccurredAt().After(topRelevant[j].mem.EffectiveOccurredAt())
+		})
+	}
 
 	out := make([]models.EpisodicMemory, 0, limit)
-	for _, s := range pool {
-		if s.score <= 0 {
-			continue
-		}
+	for _, s := range relevant {
 		out = append(out, s.mem)
 		if len(out) >= limit {
 			break

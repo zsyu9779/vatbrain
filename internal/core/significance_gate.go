@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"time"
 
 	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/vector"
@@ -233,6 +234,10 @@ type WriteEvent struct {
 	IsCorrection             bool
 	CausedBehaviorChange     bool
 	SubsequentReferenceCount int
+	// OccurredAt is when the event happened (from the source message's
+	// chat_time). Zero means no explicit time was provided; the pipeline falls
+	// back to the write time (CreatedAt).
+	OccurredAt time.Time
 }
 
 // WorkingMemoryCycle represents one cycle's compressed summary.

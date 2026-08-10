@@ -428,36 +428,58 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // eventFor builds the WriteEvent for one message. When the message carries a
 // parseable chat_time, the summary is prefixed with the event's date
-// ("[2006-01-02] ") so retrieved context preserves temporal ordering. In
-// GateModeOff the event is force-confirmed so the significance gate lets it
-// through; in GateModeOn the production derivation
-// (provider.DeriveWriteEvent) runs untouched.
+// ("[2006-01-02] ") so retrieved context preserves temporal ordering — the
+// compatibility layer kept for pre-occurred_at consumers — AND the event
+// carries the parsed time as OccurredAt, which the write pipeline persists as
+// the structured temporal attribute. In GateModeOff the event is
+// force-confirmed so the significance gate lets it through; in GateModeOn the
+// production derivation (provider.DeriveWriteEvent) runs untouched.
 func (s *Server) eventFor(content, chatTime string) core.WriteEvent {
 	content = datePrefixedContent(content, chatTime)
+	var event core.WriteEvent
 	if s.opts.GateMode == GateModeOff {
-		return core.WriteEvent{Summary: content, UserConfirmed: true}
+		event = core.WriteEvent{Summary: content, UserConfirmed: true}
+	} else {
+		event = provider.DeriveWriteEvent(content, "")
 	}
-	return provider.DeriveWriteEvent(content, "")
+	if t, ok := parseChatTime(chatTime); ok {
+		event.OccurredAt = t
+	}
+	return event
+}
+
+// chatTimeLayouts are the layouts accepted for parsing chat_time. Both are
+// treated as UTC: a bare "2006-01-02 15:04:05" parses as UTC, and the
+// RFC3339 form carries its own offset.
+var chatTimeLayouts = []string{
+	"2006-01-02T15:04:05Z07:00",
+	"2006-01-02 15:04:05",
+}
+
+// parseChatTime parses chatTime under the common layouts; ok is false for an
+// empty or unparseable chatTime (best-effort, matches datePrefixedContent).
+func parseChatTime(chatTime string) (time.Time, bool) {
+	chatTime = strings.TrimSpace(chatTime)
+	if chatTime == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range chatTimeLayouts {
+		if t, err := time.Parse(layout, chatTime); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // datePrefixedContent returns content prefixed with the message date as
 // "[2006-01-02] " when chatTime parses under a common layout; an empty or
 // unparseable chatTime leaves content unchanged (best-effort).
 func datePrefixedContent(content, chatTime string) string {
-	chatTime = strings.TrimSpace(chatTime)
-	if chatTime == "" {
+	t, ok := parseChatTime(chatTime)
+	if !ok {
 		return content
 	}
-	for _, layout := range []string{
-		"2006-01-02T15:04:05Z07:00",
-		"2006-01-02 15:04:05",
-	} {
-		t, err := time.Parse(layout, chatTime)
-		if err == nil {
-			return "[" + t.Format("2006-01-02") + "] " + content
-		}
-	}
-	return content
+	return "[" + t.Format("2006-01-02") + "] " + content
 }
 
 // ── Middleware + JSON helpers ───────────────────────────────────────────────

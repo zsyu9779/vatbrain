@@ -84,13 +84,17 @@ func (s *Store) WriteEpisodic(_ context.Context, mem *models.EpisodicMemory) err
 		isCorrection = 1
 	}
 
+	// Zero OccurredAt means no explicit event time: store CreatedAt so every
+	// row carries a usable temporal anchor (EffectiveOccurredAt).
+	occurredAt := mem.EffectiveOccurredAt()
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO episodic_memories
 			(id, project_id, language, task_type, summary, source_type,
 			 trust_level, weight, effective_frequency, entity_group,
 			 context_vector, full_snapshot_uri, is_correction, surprise_score,
-			 created_at, last_accessed_at, obsoleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 created_at, last_accessed_at, obsoleted_at, occurred_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		mem.ID.String(),
 		mem.ProjectID,
@@ -109,6 +113,7 @@ func (s *Store) WriteEpisodic(_ context.Context, mem *models.EpisodicMemory) err
 		mem.CreatedAt.UTC().Format(time.RFC3339),
 		la.UTC().Format(time.RFC3339),
 		obsoleted,
+		occurredAt.UTC().Format(time.RFC3339),
 	)
 	return err
 }
@@ -122,7 +127,7 @@ func (s *Store) GetEpisodic(_ context.Context, id uuid.UUID) (*models.EpisodicMe
 		SELECT id, project_id, language, task_type, summary, source_type,
 		       trust_level, weight, effective_frequency, entity_group,
 		       context_vector, full_snapshot_uri, is_correction, surprise_score,
-		       created_at, last_accessed_at, obsoleted_at
+		       created_at, last_accessed_at, obsoleted_at, occurred_at
 		FROM episodic_memories WHERE id = ?
 	`, id.String())
 
@@ -312,7 +317,7 @@ func (s *Store) ScanRecent(_ context.Context, since time.Time, limit int) ([]sto
 
 	rows, err := s.db.Query(`
 		SELECT id, summary, task_type, project_id, language, entity_group, entity_group AS entity_id,
-		       weight, last_accessed_at
+		       weight, last_accessed_at, COALESCE(occurred_at, created_at)
 		FROM episodic_memories
 		WHERE created_at >= ? AND obsoleted_at IS NULL
 		ORDER BY created_at DESC
@@ -326,17 +331,18 @@ func (s *Store) ScanRecent(_ context.Context, since time.Time, limit int) ([]sto
 	var items []store.EpisodicScanItem
 	for rows.Next() {
 		var item store.EpisodicScanItem
-		var idStr, taskTypeStr, laStr string
+		var idStr, taskTypeStr, laStr, occurredAtStr string
 		var entityID string
 		if err := rows.Scan(&idStr, &item.Summary, &taskTypeStr,
 			&item.ProjectID, &item.Language, &item.EntityGroup,
-			&entityID, &item.Weight, &laStr); err != nil {
+			&entityID, &item.Weight, &laStr, &occurredAtStr); err != nil {
 			return nil, err
 		}
 		item.EntityID = entityID
 		item.ID, _ = uuid.Parse(idStr)
 		item.TaskType = models.TaskType(taskTypeStr)
 		item.LastAccessed, _ = time.Parse(time.RFC3339, laStr)
+		item.OccurredAt, _ = time.Parse(time.RFC3339, occurredAtStr) // best-effort: legacy timestamps may be empty
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -429,7 +435,7 @@ func (s *Store) Close() error {
 func scanEpisodic(row *sql.Row) (*models.EpisodicMemory, error) {
 	var m models.EpisodicMemory
 	var idStr, taskTypeStr, sourceTypeStr string
-	var createdAtStr, laStr string
+	var createdAtStr, laStr, occurredAtStr string
 	var obsoletedStr *string
 	var cvBlob []byte
 	var isCorrection int
@@ -438,7 +444,7 @@ func scanEpisodic(row *sql.Row) (*models.EpisodicMemory, error) {
 		&idStr, &m.ProjectID, &m.Language, &taskTypeStr, &m.Summary, &sourceTypeStr,
 		&m.TrustLevel, &m.Weight, &m.EffectiveFrequency, &m.EntityGroup,
 		&cvBlob, &m.FullSnapshotURI, &isCorrection, &m.SurpriseScore,
-		&createdAtStr, &laStr, &obsoletedStr,
+		&createdAtStr, &laStr, &obsoletedStr, &occurredAtStr,
 	)
 	if err != nil {
 		return nil, err
@@ -455,6 +461,9 @@ func scanEpisodic(row *sql.Row) (*models.EpisodicMemory, error) {
 	if obsoletedStr != nil {
 		t, _ := time.Parse(time.RFC3339, *obsoletedStr)
 		m.ObsoletedAt = &t
+	}
+	if occurredAtStr != "" {
+		m.OccurredAt, _ = time.Parse(time.RFC3339, occurredAtStr) // best-effort: legacy timestamps may be empty
 	}
 	if len(cvBlob) > 0 {
 		m.ContextVector = vector.Float64To32(vector.Decode(cvBlob))
@@ -501,7 +510,7 @@ func scanEpisodicRows(rows *sql.Rows) ([]models.EpisodicMemory, error) {
 	for rows.Next() {
 		var m models.EpisodicMemory
 		var idStr, taskTypeStr, sourceTypeStr string
-		var createdAtStr, laStr string
+		var createdAtStr, laStr, occurredAtStr string
 		var obsoletedStr *string
 		var cvBlob []byte
 		var isCorrection int
@@ -510,7 +519,7 @@ func scanEpisodicRows(rows *sql.Rows) ([]models.EpisodicMemory, error) {
 			&idStr, &m.ProjectID, &m.Language, &taskTypeStr, &m.Summary, &sourceTypeStr,
 			&m.TrustLevel, &m.Weight, &m.EffectiveFrequency, &m.EntityGroup,
 			&cvBlob, &m.FullSnapshotURI, &isCorrection, &m.SurpriseScore,
-			&createdAtStr, &laStr, &obsoletedStr,
+			&createdAtStr, &laStr, &obsoletedStr, &occurredAtStr,
 		)
 		if err != nil {
 			return nil, err
@@ -526,6 +535,9 @@ func scanEpisodicRows(rows *sql.Rows) ([]models.EpisodicMemory, error) {
 		if obsoletedStr != nil {
 			t, _ := time.Parse(time.RFC3339, *obsoletedStr)
 			m.ObsoletedAt = &t
+		}
+		if occurredAtStr != "" {
+			m.OccurredAt, _ = time.Parse(time.RFC3339, occurredAtStr) // best-effort: legacy timestamps may be empty
 		}
 		if len(cvBlob) > 0 {
 			m.ContextVector = vector.Float64To32(vector.Decode(cvBlob))
