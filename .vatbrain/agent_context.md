@@ -12,6 +12,14 @@
 - **hermes**: `~/.hermes/hermes-agent`（HEAD 52920747e）+ 插件 `~/.hermes/plugins/vatbrain/` 已激活（config.yaml memory.provider: vatbrain）
 - **战略决策（2026-08-08，2026-08-10 确认全面转向）**: 存储全面转向 SQLite（modernc.org/sqlite），Neo4j+pgvector/Redis/MinIO 弃用；概念不变（边表=图、BLOB=向量）；新增能力只实现 SQLite 后端；旧后端代码保留兼容、不再投入、待清理
 
+## 最近工作（2026-08-10）— issue #1 状态同步（checkbox 2/20 → 8/20）
+
+- 发现 issue #1 滞后于代码库（agent_context 曾声称"checkbox 已勾选"，实际仅 2/20）。核对代码证据后同步：
+  - 新勾选 5 项：v0.4 Public Developer Experience、v0.3 反馈闭环（ProtectionLevel）、v0.2.1 Watcher GA、v0.3.1 评测增强+报告、模块复杂度纳入风险评分
+  - 标废弃 1 项：SQLite→Neo4j+pgvector 迁移工具（存储战略转向后无需求）
+  - 性能基准套件：留 [ ]，注记"OmniMemEval 质量评测已落地，延迟微基准未单独做"
+- 剩余 12 项未勾：P2 六件套（反事实推理/压缩残差/自适应衰减/多级存储/冷分层/情境向量）、P3（Team Memory/v1.x/明确暂缓）、技术债 3 项
+
 ## 最近工作（2026-08-10）— 合并 PR #2 + 存储战略文档同步
 
 - 用户合入测评分支 PR #2（`feature/omnimemeval-benchmark` → main）；本地 merge origin/main（仅 agent_context.md 冲突，已解决）
