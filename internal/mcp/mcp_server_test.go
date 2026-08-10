@@ -71,6 +71,8 @@ func TestMCPServer_ToolRegistration(t *testing.T) {
 		"detect_rule_conflicts",
 		"list_rule_conflicts",
 		"resolve_rule_conflict",
+		// v0.4 Update Tracking
+		"signal_update",
 	}
 	for _, name := range expected {
 		assert.True(t, names[name], "expected tool %q to be registered", name)

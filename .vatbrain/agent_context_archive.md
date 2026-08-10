@@ -389,3 +389,15 @@
   - 标废弃 1 项：SQLite→Neo4j+pgvector 迁移工具（存储战略转向后无需求）
   - 性能基准套件：留 [ ]，注记"OmniMemEval 质量评测已落地，延迟微基准未单独做"
 - 剩余 12 项未勾：P2 六件套（反事实推理/压缩残差/自适应衰减/多级存储/冷分层/情境向量）、P3（Team Memory/v1.x/明确暂缓）、技术债 3 项
+
+---
+
+## 最近工作（2026-08-10）— v0.4 草案制定（评测驱动精修 + 价值证明）
+
+- 综合分析三份输入：User Memory 轨评测（LME 74.2/HaluMem 65.0/LoCoMo 57.0，短板=时序 15%/52.6、动态更新 28.9、事实召回 43.6）、Agent 轨 null result（域×协议不匹配、注入=其他题完整 prompt）、遗留 feature（issue #1 余 12 项）→ `docs/v0.4/00-draft.md`
+- 核心判断：主线 Measure 未闭环 → v0.4 = 修短板（时序/动态更新/检索增强）+ 价值证明（Agent 轨二轮换域/协议 + 注入压制）
+- 范围：P0 六项（时序深入、并发 ingestion、judge 对齐重跑、Update Tracking、RRF+query expansion、延迟微基准）；P1 四项（Agent 轨二轮、Context 精简、DX 数据化、反事实）；暂缓压缩残差/自适应衰减/冷分层；多级存储降级为文件备份；Team Memory 不入
+- 决策定案（用户确认 4 项）：定位=评测驱动精修 ✅；Agent 轨二轮域=同题不同 seed（先）+ 代码修补场景（后）；时序=最小深入（occurred_at 列 + 检索排序，不动 provider 协议）；反事实=P2 等数据
+- `docs/v0.4/00-draft.md` 状态"草案"→"已定案"，§11 决策记录已更新
+- 未提交 benchmark 测试结果（后台 bmdoe0tuy 运行中）
+

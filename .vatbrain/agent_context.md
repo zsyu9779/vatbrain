@@ -2,6 +2,17 @@
 
 > 每次交互必读必写
 
+## 最近工作（2026-08-10）— v0.4 ticket 03:Update Tracking(信息更新 → 旧记忆显式废弃/提升)✅
+
+- **worktree**: `/tmp/v0.4-wt-03`(分支 `v0.4/ticket-03`,基于 11ff3468 = ticket 02 合入点)。实现 + 测试 + commit 全部在该 worktree,未触碰主仓库
+- **更新检测**: `core.UpdateTracker.DetectUpdate`(纯判定)——复用冲突检测语义基础(同主题 bigram Dice ≥ 0.25 + 指令极性),新增时间维度:新信息 `EffectiveOccurredAt()` 严格晚于旧记忆才构成覆盖;复述守卫(Dice ≥ 0.9 或子串包含)→ 走 pattern-separation append 既有路径;指令极性翻转(不要↔应该)豁免守卫;实体约束(双方锚定 EntityGroup 时须一致)
+- **生效动作**: `ApplyUpdate`——被覆盖旧记忆 `MarkObsolete` 废弃;`SUPERSEDED` 边(新→旧,`at`+`reason` props)记录覆盖关系(可解释可追溯);新记忆权重 ×1.5 提升(ClampWeight,与 ReconsolidationEngine 一致)
+- **自动检测**: 写管线 `writeMemoryPersist` 在 append 合并**之前**判定;被覆盖候选跳过合并(避免新旧内容混入同一条记忆);`WriteDeps.UpdateTracker` 可注入(nil → Default,默认开启)
+- **显式信号**: MCP 工具 `signal_update(memory_id, boost?)`——对既有记忆补发更新信号,返回 detected/applied/pairs/carrier_weight;幂等(已废弃候选跳过,重复执行 0 对、无重复边)
+- **测试**: 检测 7 类判定用例(覆盖/非更新/异主题/精确复述/前缀扩展复述/极性翻转/已废弃跳过/实体约束)、Apply 动作+自定义 boost、RunUpdateTracking 端到端+幂等、写管线 4 条集成(废弃旧/复述仍合并/更早事件不触发/异主题不触发)、MCP 工具 3 条(端到端+幂等/无覆盖/不存在)——全绿;全量测试除已知 docker 依赖(neo4j/pgvector smoke+e2e)外通过
+- **范围约束遵守**: 不新建并列机制(复用 bigramDice/DetectPolarity/MarkObsolete/CreateEdge/UpdateEpisodicWeight/写管线漏斗);未动 provider 协议签名;语义记忆层不新增更新机制(规则层已有 trust 裁决)
+- **待办**: 评测验证在 ticket 06 收口(HaluMem Dynamic Update 28.9% → ≥50% 预期);`docs/v0.4/03-update-tracking.md` 决策表 10 项 + 已知权衡(同义复述风险)
+
 ## 项目状态
 
 - **阶段**: Hermes 集成完成 + backlog issue #1 完成；**Agent Memory 轨 benchmark 全量跑完 = null result（记忆全链路生效但无跨任务迁移价值）；PR #2（OmniMemEval 测评接入）已合入 main** ✅
@@ -31,13 +42,3 @@
 - **首次实测(Apple M3,关键词 embedder,内核成本)**: 写入 SQLite full p95 58.1ms、precomputed p95 65.4ms;检索命中 p95 39.4ms / miss p95 67.9ms;整合 300 条 p95 4.9ms——**ROADMAP 里程碑(写 <200ms、命中 <100ms、miss <500ms)首次实测全部达标**
 - **关键观察**: 写入/检索瓶颈 = pattern-separation 检索拉 `embeddingRankPool=5000` 行 BLOB(1536 维 ~6KB/行)做进程内余弦(HaluMem 召回修复的既定代价),大库下是后续向量索引专项的基线
 - 全量测试通过(除已知 docker 依赖:neo4j/pgvector smoke + e2e)
-
-## 最近工作（2026-08-10）— v0.4 草案制定（评测驱动精修 + 价值证明）
-
-- 综合分析三份输入：User Memory 轨评测（LME 74.2/HaluMem 65.0/LoCoMo 57.0，短板=时序 15%/52.6、动态更新 28.9、事实召回 43.6）、Agent 轨 null result（域×协议不匹配、注入=其他题完整 prompt）、遗留 feature（issue #1 余 12 项）→ `docs/v0.4/00-draft.md`
-- 核心判断：主线 Measure 未闭环 → v0.4 = 修短板（时序/动态更新/检索增强）+ 价值证明（Agent 轨二轮换域/协议 + 注入压制）
-- 范围：P0 六项（时序深入、并发 ingestion、judge 对齐重跑、Update Tracking、RRF+query expansion、延迟微基准）；P1 四项（Agent 轨二轮、Context 精简、DX 数据化、反事实）；暂缓压缩残差/自适应衰减/冷分层；多级存储降级为文件备份；Team Memory 不入
-- 决策定案（用户确认 4 项）：定位=评测驱动精修 ✅；Agent 轨二轮域=同题不同 seed（先）+ 代码修补场景（后）；时序=最小深入（occurred_at 列 + 检索排序，不动 provider 协议）；反事实=P2 等数据
-- `docs/v0.4/00-draft.md` 状态"草案"→"已定案"，§11 决策记录已更新
-- 未提交 benchmark 测试结果（后台 bmdoe0tuy 运行中）
-

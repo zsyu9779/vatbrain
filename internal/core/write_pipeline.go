@@ -49,6 +49,11 @@ type WriteDeps struct {
 	// skipping it avoids up to ~40 embedding API calls per write when a paid
 	// semantic embedder is configured.
 	SkipLinkOnWrite bool
+	// UpdateTracker judges when a temporally newer event about the same
+	// subject covers older memories (v0.4 Update Tracking): covered memories
+	// are retired instead of competing with the new information. May be nil,
+	// in which case a DefaultUpdateTracker is used.
+	UpdateTracker *UpdateTracker
 }
 
 // WriteResult summarises the outcome of WriteMemory.
@@ -169,6 +174,7 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 	embedding []float32, projectID, language, entityID string, taskType models.TaskType) (WriteResult, error) {
 
 	surprise := prepared.surprise
+	now := time.Now()
 
 	// Search for similar existing memories to check pattern-separation merge.
 	candidates, err := deps.Store.SearchEpisodic(ctx, store.EpisodicSearchRequest{
@@ -186,8 +192,33 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 		EntityID:  entityID,
 	}
 
+	// Update tracking: a temporally newer event about the same subject covers
+	// older memories — they are retired so old and new information do not
+	// compete at retrieval. The judgement reuses the conflict detector's
+	// same-subject basis (character-bigram Dice + polarity) plus temporal
+	// recency (event.OccurredAt, falling back to the write time). Covered
+	// candidates are excluded from the pattern-separation append loop so an
+	// update is never mixed into the memory it supersedes.
+	tracker := deps.UpdateTracker
+	if tracker == nil {
+		tracker = DefaultUpdateTracker()
+	}
+	covered := tracker.DetectUpdate(models.EpisodicMemory{
+		Summary:     event.Summary,
+		EntityGroup: entityID,
+		OccurredAt:  event.OccurredAt,
+		CreatedAt:   now,
+	}, candidates)
+	coveredIDs := make(map[uuid.UUID]struct{}, len(covered))
+	for _, p := range covered {
+		coveredIDs[p.OldID] = struct{}{}
+	}
+
 	// Check each similar candidate for merge.
 	for _, candidate := range candidates {
+		if _, skip := coveredIDs[candidate.ID]; skip {
+			continue // covered by the update judgement — retired, not merged
+		}
 		if len(candidate.ContextVector) == 0 {
 			continue
 		}
@@ -209,7 +240,6 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 			continue
 		}
 
-		now := time.Now()
 		sim := vector.CosineSimilarity(vector.Float32To64(embedding),
 			vector.Float32To64(candidate.ContextVector))
 		newWeight := ClampWeight(sim + 0.1)
@@ -236,6 +266,13 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 			return WriteResult{}, fmt.Errorf("%w: %v", errWritePipelinePersist, uErr)
 		}
 
+		// Apply the update actions the detection found: retire the covered
+		// memories, record SUPERSEDED edges, boost the carrier's weight.
+		newWeight, aErr := applyUpdateActions(ctx, tracker, deps.Store, *existing, covered, now)
+		if aErr != nil {
+			return WriteResult{}, fmt.Errorf("%w: %v", errWritePipelinePersist, aErr)
+		}
+
 		return WriteResult{
 			MemoryID:    existing.ID,
 			Persisted:   true,
@@ -247,7 +284,6 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 
 	// No merge — create new episodic memory.
 	memoryID := uuid.New()
-	now := time.Now()
 	effFreq, weight := deps.WeightDecay.ComputeFull([]time.Time{now}, now, now)
 
 	// Temporal attribute: carry the event's explicit time through; when the
@@ -279,6 +315,13 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 		return WriteResult{}, fmt.Errorf("%w: %v", errWritePipelinePersist, err)
 	}
 
+	// Apply the update actions the detection found: retire the covered
+	// memories, record SUPERSEDED edges, boost the carrier's weight.
+	mem.Weight, err = applyUpdateActions(ctx, tracker, deps.Store, *mem, covered, now)
+	if err != nil {
+		return WriteResult{}, fmt.Errorf("%w: %v", errWritePipelinePersist, err)
+	}
+
 	// Link to related memories (best-effort). Skippable for batch-import paths
 	// (e.g. the benchmark entrypoint) where RELATES_TO edges are not consumed.
 	if !deps.SkipLinkOnWrite {
@@ -296,8 +339,26 @@ func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, p
 		Persisted:   true,
 		GateReason:  prepared.gate.Reason,
 		MergeAction: models.MergeActionCreatedNew,
-		Weight:      weight,
+		Weight:      mem.Weight,
 	}, nil
+}
+
+// applyUpdateActions makes an update-tracking detection effective for the
+// carrier memory (the memory carrying the newer information): retire every
+// covered memory, record SUPERSEDED edges, and boost the carrier's weight.
+// Returns the carrier's weight after the boost — unchanged when nothing was
+// applied — so the caller's WriteResult reflects the promoted value. Shared
+// by the merge path (carrier = the appended memory) and the new-memory path
+// so the two call sites cannot drift apart.
+func applyUpdateActions(ctx context.Context, tracker *UpdateTracker, s store.MemoryStore, carrier models.EpisodicMemory, covered []UpdatePair, now time.Time) (float64, error) {
+	if len(covered) == 0 {
+		return carrier.Weight, nil
+	}
+	applied, err := tracker.ApplyUpdate(ctx, s, carrier, covered, now)
+	if err != nil {
+		return 0, err
+	}
+	return applied.CarrierWeight, nil
 }
 
 // ClampWeight ensures the weight stays in [0, 1].
