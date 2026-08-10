@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,8 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/vatbrain/vatbrain/internal/config"
 	"github.com/vatbrain/vatbrain/internal/core"
+	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/models"
+	"github.com/vatbrain/vatbrain/internal/store/sqlite"
 )
 
 func seedEpisodic(t *testing.T, deps core.WriteDeps, projectID, summary string) {
@@ -68,6 +72,44 @@ func TestRetrieveEpisodic_NoMatch(t *testing.T) {
 	assert.Empty(t, res)
 }
 
+// TestRetrieveEpisodic_Expansion_CaseFoldRecall verifies the case-folded
+// lexical scoring on the fallback path: an all-caps Latin query shares no
+// raw bigram with the canonical summary, yet still recalls it — the recall
+// bridge the query expansion + case folding exist for.
+func TestRetrieveEpisodic_Expansion_CaseFoldRecall(t *testing.T) {
+	deps, _ := testDeps(t) // stub embedder → zero vector → lexical fallback
+	seedEpisodic(t, deps, "coder",
+		"OpenClash 覆写脚本用 Ruby YAML 解析")
+
+	res, err := RetrieveEpisodic(context.Background(), deps, "coder", "OPENCLASH", 5)
+	require.NoError(t, err)
+	require.NotEmpty(t, res)
+	assert.Contains(t, res[0].Summary, "OpenClash")
+}
+
+// TestRetrieveEpisodic_RRF_VectorlessRecall is the ticket's recall win end-to-
+// end: with a keyword embedder the embedding path runs, and the RRF request
+// (Query + Embedding) lets the lexical channel surface a memory that carries
+// no context vector — the pure semantic path would return nothing at all.
+func TestRetrieveEpisodic_RRF_VectorlessRecall(t *testing.T) {
+	st, err := sqlite.NewStore(config.SQLiteConfig{
+		Path: filepath.Join(t.TempDir(), "rrf.db"), WAL: true,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+
+	deps := core.WriteDeps{
+		Store:    st,
+		Embedder: embedder.NewKeywordEmbedder(0), // non-zero vector → semantic path
+	}
+	seedEpisodic(t, deps, "coder", "golden banana pendant 精确事实")
+
+	res, err := RetrieveEpisodic(context.Background(), deps, "coder", "golden banana", 5)
+	require.NoError(t, err)
+	require.NotEmpty(t, res)
+	assert.Contains(t, res[0].Summary, "golden banana")
+}
+
 func TestRetrievePitfalls_EntityBoost(t *testing.T) {
 	deps, st := testDeps(t)
 	now := time.Now()
@@ -93,10 +135,36 @@ func TestRetrievePitfalls_EntityBoost(t *testing.T) {
 	assert.Equal(t, "clawfeed-push-v3.py", res[0].EntityID)
 }
 
+// TestRetrievePitfalls_CaseFold pins the intended consequence of sharing the
+// case-folding bigram scoring: an all-caps signature query matches the
+// canonical pitfall signature, aligning pitfall recall with the ticket 04
+// lexical-case recall direction.
+func TestRetrievePitfalls_CaseFold(t *testing.T) {
+	deps, st := testDeps(t)
+	require.NoError(t, st.WritePitfall(context.Background(), &models.PitfallMemory{
+		ID:                uuid.New(),
+		EntityID:          "func:ParseYaml",
+		EntityType:        models.EntityTypeFunction,
+		ProjectID:         "coder",
+		Signature:         "parseYaml 必须处理空流",
+		RootCauseCategory: models.RootCauseLogicError,
+		TrustLevel:        models.DefaultTrustLevel,
+		Weight:            1.0,
+		OccurrenceCount:   2, // proposed with high confidence → injectable
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}))
+
+	res, err := RetrievePitfalls(context.Background(), deps, "coder", "PARSEYAML", 3)
+	require.NoError(t, err)
+	require.NotEmpty(t, res)
+	assert.Equal(t, "func:ParseYaml", res[0].EntityID)
+}
+
 func TestFormatPrefetch_IncludesRiskAdvisory(t *testing.T) {
 	now := time.Now()
 	ep := models.EpisodicMemory{
-		Summary: "软路由 OpenClash 调试记录\n跨行内容",
+		Summary:  "软路由 OpenClash 调试记录\n跨行内容",
 		Language: "zh",
 	}
 	pit := models.PitfallMemory{
@@ -120,14 +188,4 @@ func TestFormatPrefetch_IncludesRiskAdvisory(t *testing.T) {
 
 func TestFormatPrefetch_Empty(t *testing.T) {
 	assert.Empty(t, FormatPrefetch(nil, nil))
-}
-
-func TestBigramOverlap_Chinese(t *testing.T) {
-	// 相同文本重叠 1.0
-	assert.InDelta(t, 1.0, bigramOverlap("软路由调试", "软路由调试"), 1e-9)
-	// 无关文本接近 0
-	assert.Less(t, bigramOverlap("量子引力", "菜谱烹饪"), 0.1)
-	// 部分重叠 0 < s < 1
-	s := bigramOverlap("OpenClash 调试", "OpenClash 配置")
-	assert.True(t, s > 0 && s < 1, "partial overlap should be in (0,1), got %v", s)
 }

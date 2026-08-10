@@ -4,13 +4,23 @@
 
 ## 项目状态
 
-- **阶段**: Hermes 集成完成 + backlog issue #1 完成；**Agent Memory 轨 benchmark 全量跑完 = null result（记忆全链路生效但无跨任务迁移价值）；PR #2（OmniMemEval 测评接入）已合入 main** ✅
+- **阶段**: Hermes 集成完成 + backlog issue #1 完成；**Agent Memory 轨 benchmark 全量跑完 = null result（记忆全链路生效但无跨任务迁移价值）；PR #2（OmniMemEval 测评接入）已合入 main** ✅；v0.4 ticket 01/02/04 已完成
 - **语言**: Go (go 1.25.5) + Python（hermes 插件 + OmniMemEval AgentBench）
-- **分支**: `main`（已合入 PR #2 `feature/omnimemeval-benchmark` + 本会话文档同步）
+- **分支**: `main`（已合入 PR #2 `feature/omnimemeval-benchmark`）+ v0.4 ticket worktree（01/02/04 各自独立分支合入点）
 - **远端**: `origin/main` 已同步（PR #2 合入后本地已 merge）
 - **交接文档**: `docs/HERMES_INTEGRATION_HANDOFF.md` §0 检查点 · `docs/v0.3/05-agent-memory-handoff.md`（Agent 轨启动指南）· `docs/v0.3/07/08/09-*`（benchmark 规划/烟测/正式结果）
 - **hermes**: `~/.hermes/hermes-agent`（HEAD 52920747e）+ 插件 `~/.hermes/plugins/vatbrain/` 已激活（config.yaml memory.provider: vatbrain）
 - **战略决策（2026-08-08，2026-08-10 确认全面转向）**: 存储全面转向 SQLite（modernc.org/sqlite），Neo4j+pgvector/Redis/MinIO 弃用；概念不变（边表=图、BLOB=向量）；新增能力只实现 SQLite 后端；旧后端代码保留兼容、不再投入、待清理
+
+## 最近工作（2026-08-10）— v0.4 ticket 04:检索增强(RRF 融合排序 + Query Expansion)✅
+
+- **worktree**: `/tmp/v0.4-wt-04`(分支 `v0.4/ticket-04`,基于 11ff3468 = ticket 02 合入点)。实现 + 测试 + commit 全部在该 worktree,未触碰主仓库
+- **Query expansion**: `embedder.ExpandQuery`(确定性、CJK-safe、无需外部服务:实体引用 `@?x.ext` 大小写不敏感 + Latin 词元 + 数字,原问题保留为前缀,术语去重);`CharBigrams/BigramOverlap/BigramOverlapFromSets` 从 provider 提升到 embedder(词法基元共享,ASCII 大小写折叠——大小写变体召回的杠杆),provider 本地副本删除
+- **RRF 融合**: `EpisodicSearchRequest.Query + RrfK`(默认 60,可调);`SearchEpisodic` 在 Embedding+Query 同时给出时走 `rrfRanked`——语义余弦排序 ∪ 词法 query-vs-summary bigram 排序 → `score = Σ 1/(K+rank)`;无向量候选经词法通道进入排序(精确事实召回);SurpriseBoost 后置乘到融合分(共存);硬约束仍在 SQL WHERE 层先压候选池(测试验证不绕过);词法打分无向量候选也参与;Query 无 Embedding 不激活(纯结构化查询行为不变)
+- **provider 接线**: `RetrieveEpisodic` 先 `ExpandQuery` 再 Embed,语义路径请求带 `Query`(RRF 激活),词法回退路径用扩展文本打分;`RetrievePitfalls` 改走 embedder 共享基元(行为不变)
+- **测试**: embedder expand 11 用例;sqlite `rrf_test.go` 8 用例(词法救援/无向量救援/不劣于语义基线/K 可调翻序/SurpriseBoost 共存/硬约束/时间排序 rank-then-sort/Query 无 Embedding);provider 端到端 2 用例(case-fold 召回、RRF 无向量召回,后者用 keyword embedder + sqlite store);全量通过(除已知 neo4jpg docker 挂起)
+- **范围约束遵守**: 协议签名零变化(仅请求结构体加字段,additive);api/mcp 检索入口未接线扩展(保持原行为,RRF 为 opt-in 机制);memory 内存后端未实现融合(文档注明退化为纯语义)
+- **待办**: 评测验证在 ticket 06 收口(Basic Fact 43.6% 回升预期;多跳检索同升)
 
 ## 最近工作（2026-08-10）— v0.4 ticket 02:时序记忆最小深入(occurred_at + 时间检索)✅
 
@@ -21,23 +31,3 @@
 - **测试**: 迁移回填+幂等、读写回环+回退、过滤/排序(结构化+embed 路径+缓存旁路)、双写路径透传、ParseRelativeTime 9 用例、provider 集成(embed/词法双路径)、bench 端到端——全绿;全量测试除已知 docker 依赖(neo4j/pgvector smoke+e2e)外通过
 - **范围约束遵守**: 未动 provider 协议签名(MCP/api/JSON-RPC 无变化);neo4jpg 旧后端仅不持久化新字段(弃用,不投入)
 - **待办**: 评测验证在 ticket 06 收口(LoCoMo Temporal 15% / LME 52.6% 回升预期)
-
-## 最近工作（2026-08-10）— v0.4 ticket 01:bench 基建(并发 ingestion + 延迟微基准)✅
-
-- **worktree**: `/tmp/v0.4-wt-01`(分支 `v0.4/ticket-01`,基于 c9cd9b1)。实现 + 测试 + commit 全部在该 worktree,未触碰主仓库
-- **并发 ingestion**: `/v1/add` 两阶段——worker 池(默认 32,钳制 [1,64])+ 批量 64 文本/请求 + 429/1302/1305 指数退避重试 并行 embedding,再按请求顺序写库(SQLite 单写者)。语义与顺序流水线完全一致(门控/合并顺序不变)
-- **新增**: `internal/embedder/batch.go`(OpenAIProvider.EmbedBatch 分块重试 + Keyword/Dual 的 EmbedBatch + BatchEmbedder 池);`core.WriteMemoryWithEmbedding`(预计算向量 seam,共享 prepareWriteEvent/writeMemoryPersist);bench `Options.IngestWorkers/EmbedBatchSize` + flag `--embed-workers/--embed-batch`(env VATBRAIN_BENCH_* 可覆盖);无批量能力 embedder 自动回退顺序路径
-- **延迟微基准**: `internal/bench/latency_bench_test.go`(写入 full/precomputed × 内存/SQLite、检索命中/miss、整合 300 条,p50/p95/p99 nearest-rank)+ `docs/v0.4/01-bench-infra.md`
-- **首次实测(Apple M3,关键词 embedder,内核成本)**: 写入 SQLite full p95 58.1ms、precomputed p95 65.4ms;检索命中 p95 39.4ms / miss p95 67.9ms;整合 300 条 p95 4.9ms——**ROADMAP 里程碑(写 <200ms、命中 <100ms、miss <500ms)首次实测全部达标**
-- **关键观察**: 写入/检索瓶颈 = pattern-separation 检索拉 `embeddingRankPool=5000` 行 BLOB(1536 维 ~6KB/行)做进程内余弦(HaluMem 召回修复的既定代价),大库下是后续向量索引专项的基线
-- 全量测试通过(除已知 docker 依赖:neo4j/pgvector smoke + e2e)
-
-## 最近工作（2026-08-10）— v0.4 草案制定（评测驱动精修 + 价值证明）
-
-- 综合分析三份输入：User Memory 轨评测（LME 74.2/HaluMem 65.0/LoCoMo 57.0，短板=时序 15%/52.6、动态更新 28.9、事实召回 43.6）、Agent 轨 null result（域×协议不匹配、注入=其他题完整 prompt）、遗留 feature（issue #1 余 12 项）→ `docs/v0.4/00-draft.md`
-- 核心判断：主线 Measure 未闭环 → v0.4 = 修短板（时序/动态更新/检索增强）+ 价值证明（Agent 轨二轮换域/协议 + 注入压制）
-- 范围：P0 六项（时序深入、并发 ingestion、judge 对齐重跑、Update Tracking、RRF+query expansion、延迟微基准）；P1 四项（Agent 轨二轮、Context 精简、DX 数据化、反事实）；暂缓压缩残差/自适应衰减/冷分层；多级存储降级为文件备份；Team Memory 不入
-- 决策定案（用户确认 4 项）：定位=评测驱动精修 ✅；Agent 轨二轮域=同题不同 seed（先）+ 代码修补场景（后）；时序=最小深入（occurred_at 列 + 检索排序，不动 provider 协议）；反事实=P2 等数据
-- `docs/v0.4/00-draft.md` 状态"草案"→"已定案"，§11 决策记录已更新
-- 未提交 benchmark 测试结果（后台 bmdoe0tuy 运行中）
-

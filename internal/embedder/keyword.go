@@ -52,7 +52,11 @@ func (k *KeywordEmbedder) Embed(_ context.Context, text string) ([]float32, erro
 	return vec, nil
 }
 
-// charBigrams builds the character-bigram set of s.
+// charBigrams builds the character-bigram list of s — the write-path
+// hashing form of the keyword channel. It is deliberately case-sensitive and
+// order-preserving: KeywordEmbedder.Embed vectors are persisted, so this
+// form must stay byte-stable across versions. Query-time scoring uses the
+// exported CharBigrams (set form, ASCII case-folded) instead.
 func charBigrams(s string) []string {
 	r := []rune(s)
 	if len(r) == 0 {

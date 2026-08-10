@@ -44,6 +44,21 @@ type EpisodicSearchRequest struct {
 	// "最近一次" (most recent) semantic. It also disables the hot cache:
 	// time-ordered results are inherently freshness-sensitive.
 	SortByOccurredAt bool
+
+	// Query is the lexical-channel query text — typically the query-expanded
+	// form of the question (embedder.ExpandQuery). When set together with
+	// Embedding, candidates are ranked by both channels — semantic cosine
+	// (Embedding) and lexical character-bigram overlap (Query vs summary) —
+	// and the two rankings are fused with reciprocal rank fusion (RRF), so
+	// exact-keyword facts the semantic channel ranks low still surface.
+	// Backends that do not implement fusion ignore it, degrading to the
+	// pure-semantic ranking. Without Embedding it is ignored entirely.
+	Query string
+
+	// RrfK is the RRF fusion constant K (fused score = Σ 1/(K + rank), ranks
+	// 1-based); 0 uses the default (60). It only applies when Query and
+	// Embedding are both set.
+	RrfK int
 }
 
 // SemanticSearchRequest carries filters and an optional embedding for semantic

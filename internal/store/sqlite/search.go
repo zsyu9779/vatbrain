@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
 	"github.com/vatbrain/vatbrain/internal/vector"
@@ -24,6 +25,10 @@ type scoredEpisodic struct {
 // capping memory: each candidate carries a 2048-dim context vector (~16KB),
 // so 5000 candidates ≈ 80MB transient at the worst case.
 const embeddingRankPool = 5000
+
+// defaultRrfK is the RRF fusion constant used when EpisodicSearchRequest.RrfK
+// is left at 0. 60 is the conventional value (Cornack et al. 2009).
+const defaultRrfK = 60
 
 // SearchEpisodic searches episodic memories. If an embedding is provided in the
 // request, candidates are ranked by in-process cosine similarity. Otherwise,
@@ -133,24 +138,21 @@ func (s *Store) SearchEpisodic(_ context.Context, req store.EpisodicSearchReques
 
 	if req.Embedding != nil && len(candidates) > 0 && goRanking {
 		var ranked []scoredEpisodic
-		for _, m := range candidates {
-			if len(m.ContextVector) == 0 {
-				continue
-			}
-			emb := vector.Float32To64(m.ContextVector)
-			if len(emb) != len(req.Embedding) {
-				continue
-			}
-			sim := vector.CosineSimilarity(req.Embedding, emb)
+		if req.Query != "" {
+			// RRF fusion: the lexical channel (query-vs-summary bigram
+			// overlap) rescues exact-keyword facts the semantic channel ranks
+			// low — and vice versa — while candidates ranked by a single
+			// channel still compete through it.
+			ranked = rrfRanked(candidates, req)
+		} else {
+			ranked = semanticScores(candidates, req.Embedding)
 			// Surprise boost promotes high-surprise memories above otherwise
 			// equal peers without disturbing pure-cosine ordering.
 			if req.SurpriseBoost > 0 {
-				sim *= 1 + req.SurpriseBoost*m.SurpriseScore
+				for i := range ranked {
+					ranked[i].score *= 1 + req.SurpriseBoost*ranked[i].mem.SurpriseScore
+				}
 			}
-			ranked = append(ranked, scoredEpisodic{
-				mem:   m,
-				score: sim,
-			})
 		}
 
 		sortScoredEpisodics(ranked)
@@ -260,4 +262,89 @@ func sortScoredEpisodics(items []scoredEpisodic) {
 			}
 		}
 	}
+}
+
+// rrfRanked ranks the hard-constraint candidate pool by reciprocal rank
+// fusion of two channels: semantic (embedding cosine against the stored
+// context vector, skipping vectorless candidates) and lexical (query-vs-
+// summary character-bigram overlap, CJK-safe — the keyword channel's feature
+// machinery). Each channel yields a 1-based rank list; a candidate's fused
+// score is Σ 1/(K + rank) over the lists it appears in, so a memory that one
+// channel ranks last but the other ranks first still competes. Candidates
+// ranked by neither channel score zero and are excluded. SurpriseBoost is
+// applied on the fused score, promoting high-surprise memories above
+// otherwise-equal peers without disturbing fusion ordering.
+func rrfRanked(candidates []models.EpisodicMemory,
+	req store.EpisodicSearchRequest) []scoredEpisodic {
+	k := req.RrfK
+	if k <= 0 {
+		k = defaultRrfK
+	}
+
+	sem := semanticScores(candidates, req.Embedding)
+	sortScoredEpisodics(sem)
+
+	lex := make([]scoredEpisodic, 0, len(candidates))
+	for _, m := range candidates {
+		if s := embedder.BigramOverlap(req.Query, m.Summary); s > 0 {
+			lex = append(lex, scoredEpisodic{mem: m, score: s})
+		}
+	}
+	sortScoredEpisodics(lex)
+
+	semRank := rankMap(sem)
+	lexRank := rankMap(lex)
+
+	fused := make([]scoredEpisodic, 0, len(candidates))
+	for _, m := range candidates {
+		id := m.ID.String()
+		score := 0.0
+		if r, ok := semRank[id]; ok {
+			score += 1.0 / float64(k+r)
+		}
+		if r, ok := lexRank[id]; ok {
+			score += 1.0 / float64(k+r)
+		}
+		if score == 0 {
+			continue
+		}
+		if req.SurpriseBoost > 0 {
+			score *= 1 + req.SurpriseBoost*m.SurpriseScore
+		}
+		fused = append(fused, scoredEpisodic{mem: m, score: score})
+	}
+	return fused
+}
+
+// semanticScores scores candidates by embedding cosine against the stored
+// context vector — the shared semantic channel of the pure-embedding ranking
+// and the RRF fusion. Vectorless candidates and dimension mismatches are
+// skipped. Results are unsorted; callers rank them.
+func semanticScores(candidates []models.EpisodicMemory,
+	query []float64) []scoredEpisodic {
+	out := make([]scoredEpisodic, 0, len(candidates))
+	for _, m := range candidates {
+		if len(m.ContextVector) == 0 {
+			continue
+		}
+		emb := vector.Float32To64(m.ContextVector)
+		if len(emb) != len(query) {
+			continue
+		}
+		out = append(out, scoredEpisodic{
+			mem:   m,
+			score: vector.CosineSimilarity(query, emb),
+		})
+	}
+	return out
+}
+
+// rankMap maps each ranked item's memory ID to its 1-based position in the
+// list — the input representation of reciprocal rank fusion.
+func rankMap(items []scoredEpisodic) map[string]int {
+	m := make(map[string]int, len(items))
+	for i, item := range items {
+		m[item.mem.ID.String()] = i + 1
+	}
+	return m
 }

@@ -3,12 +3,12 @@ package provider
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/vatbrain/vatbrain/internal/core"
+	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/store"
 	"github.com/vatbrain/vatbrain/internal/vector"
@@ -28,9 +28,10 @@ const (
 	surpriseRankingBoost = 0.25
 )
 
-// entityRefRe finds code-entity references in a query (mirrors the refiner's
-// heuristic so entity-anchored pitfalls can be surfaced from the query text).
-var entityRefRe = regexp.MustCompile(`@?[\w./-]+\.(go|proto|ts|tsx|js|py|java|rs)`)
+// entityRefRe finds code-entity references in a query so entity-anchored
+// pitfalls surface from the query text. Shared with query expansion
+// (embedder.EntityRefRe) — one pattern, no drift.
+var entityRefRe = embedder.EntityRefRe
 
 // PrefetchContext is the plain-text recall bundle returned to hermes. The
 // hermes MemoryManager wraps it in the <memory-context> fence — providers
@@ -41,10 +42,13 @@ type PrefetchContext struct {
 }
 
 // RetrieveEpisodic finds the episodic memories most relevant to query within
-// a project. Uses embedding cosine when the embedder yields a signal
-// (CJK-safe, per F1); otherwise a character-bigram overlap score that also
-// handles Chinese. Relative-time expressions in the query ("上周", "last
-// week", "最近一次", "most recent") narrow the result to the implied
+// a project. The question is first query-expanded into its keyword/entity
+// form (embedder.ExpandQuery); when the embedder yields a signal (CJK-safe,
+// per F1) the expanded text is embedded and the store fuses the semantic and
+// lexical rankings via RRF (Query + Embedding). Otherwise a character-bigram
+// overlap score over the expanded text handles the recall — Chinese-safe and
+// ASCII case-insensitive. Relative-time expressions in the query ("上周",
+// "last week", "最近一次", "most recent") narrow the result to the implied
 // occurred_at window and/or order results newest-first (ParseRelativeTime).
 func RetrieveEpisodic(ctx context.Context, deps core.WriteDeps, projectID, query string, limit int) ([]models.EpisodicMemory, error) {
 	if limit <= 0 {
@@ -53,11 +57,24 @@ func RetrieveEpisodic(ctx context.Context, deps core.WriteDeps, projectID, query
 
 	window := ParseRelativeTime(query, time.Now())
 
-	emb, err := deps.Embedder.Embed(ctx, query)
+	// Query expansion (ticket 04): the question is expanded into its
+	// keyword/entity form before embedding, so both retrieval channels see
+	// the canonical anchors (deterministic, CJK-safe — embedder.ExpandQuery).
+	expanded, err := embedder.ExpandQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	emb, err := deps.Embedder.Embed(ctx, expanded)
 	if err == nil && hasVectorMagnitude(emb) {
 		return deps.Store.SearchEpisodic(ctx, store.EpisodicSearchRequest{
-			ProjectID:        projectID,
-			Embedding:        vector.Float32To64(emb),
+			ProjectID: projectID,
+			Embedding: vector.Float32To64(emb),
+			// Query arms the RRF fusion: the store ranks candidates by both
+			// the semantic embedding and the lexical query-vs-summary overlap,
+			// fusing the two orderings so exact-keyword facts the semantic
+			// channel ranks low still surface.
+			Query:            expanded,
 			Limit:            limit,
 			SurpriseBoost:    surpriseRankingBoost,
 			OccurredAfter:    window.After,
@@ -103,7 +120,7 @@ func RetrieveEpisodic(ctx context.Context, deps core.WriteDeps, projectID, query
 			Summary:    item.Summary,
 			Weight:     item.Weight,
 			OccurredAt: item.OccurredAt,
-		}, score: bigramOverlap(query, item.Summary)})
+		}, score: embedder.BigramOverlap(expanded, item.Summary)})
 	}
 
 	// Relevance gate: only overlapping items are candidates.
@@ -159,7 +176,7 @@ func RetrievePitfalls(ctx context.Context, deps core.WriteDeps, projectID, query
 	}
 
 	entityIDs := entityRefRe.FindAllString(query, -1)
-	queryBigrams := charBigrams(query)
+	queryBigrams := embedder.CharBigrams(query)
 
 	type scored struct {
 		p     models.PitfallMemory
@@ -170,7 +187,7 @@ func RetrievePitfalls(ctx context.Context, deps core.WriteDeps, projectID, query
 		if !p.Injectable() {
 			continue
 		}
-		s := bigramOverlapFromSets(queryBigrams, charBigrams(p.Signature))
+		s := embedder.BigramOverlapFromSets(queryBigrams, embedder.CharBigrams(p.Signature))
 		for _, e := range entityIDs {
 			if strings.Contains(strings.ToLower(p.EntityID), strings.ToLower(strings.TrimPrefix(e, "@"))) {
 				s += 0.3
@@ -241,40 +258,4 @@ func hasVectorMagnitude(v []float32) bool {
 		}
 	}
 	return false
-}
-
-// bigramOverlap returns the Dice coefficient of the character-bigram sets of
-// a and b. Character bigrams work for both Chinese and Latin text.
-func bigramOverlap(a, b string) float64 {
-	if a == "" || b == "" {
-		return 0
-	}
-	return bigramOverlapFromSets(charBigrams(a), charBigrams(b))
-}
-
-// bigramOverlapFromSets computes the Dice coefficient of two bigram sets.
-func bigramOverlapFromSets(ab, bb map[string]struct{}) float64 {
-	if len(ab) == 0 || len(bb) == 0 {
-		return 0
-	}
-	inter := 0
-	for g := range ab {
-		if _, ok := bb[g]; ok {
-			inter++
-		}
-	}
-	return 2.0 * float64(inter) / float64(len(ab)+len(bb))
-}
-
-// charBigrams builds the character-bigram set of s.
-func charBigrams(s string) map[string]struct{} {
-	r := []rune(s)
-	if len(r) == 1 {
-		return map[string]struct{}{string(r[0]): {}}
-	}
-	out := make(map[string]struct{}, len(r)-1)
-	for i := 0; i+1 < len(r); i++ {
-		out[string(r[i:i+2])] = struct{}{}
-	}
-	return out
 }
