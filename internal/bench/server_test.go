@@ -2,10 +2,14 @@ package bench
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -360,4 +364,164 @@ func TestBench_SQLiteBackend_EndToEnd(t *testing.T) {
 	code, out = postJSON(t, ts.URL+"/v1/delete", `{"user_id":"u1"}`)
 	require.Equal(t, http.StatusOK, code)
 	assert.Equal(t, float64(1), out["deleted"])
+}
+
+// ── Concurrent ingestion (parallel embedding, sequential writes) ─────────────
+
+// failingBatchEmbedder wraps a keyword embedder and always fails batched
+// embedding, simulating a provider outage during the parallel phase.
+type failingBatchEmbedder struct {
+	*embedder.KeywordEmbedder
+}
+
+func (f *failingBatchEmbedder) EmbedBatch(context.Context, []string) ([][]float32, error) {
+	return nil, errors.New("embedding service unavailable")
+}
+
+func TestBench_Add_ConcurrentIngest_PersistsAllMessages(t *testing.T) {
+	ts := newTestServer(t, GateModeOff)
+
+	// The keyword embedder is batch-capable, so /v1/add must embed all 200
+	// messages concurrently, then persist them sequentially.
+	var sb strings.Builder
+	for i := 0; i < 200; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, `{"role":"user","content":"memory number %d about topic alpha","chat_time":"2029-01-01T10:00:00Z"}`, i)
+	}
+	code, out := postJSON(t, ts.URL+"/v1/add",
+		fmt.Sprintf(`{"user_id":"u1","messages":[%s]}`, sb.String()))
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, float64(200), out["persisted"])
+	assert.Equal(t, float64(0), out["skipped"])
+
+	code, out = postJSON(t, ts.URL+"/v1/search", `{"user_id":"u1","query":"topic alpha memory","top_k":10}`)
+	require.Equal(t, http.StatusOK, code)
+	results, ok := out["results"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, results, "concurrently ingested memories must be retrievable")
+}
+
+func TestBench_Add_ConcurrentIngest_EmptyMessagesSkipped(t *testing.T) {
+	ts := newTestServer(t, GateModeOff)
+
+	code, out := postJSON(t, ts.URL+"/v1/add", `{
+		"user_id": "u1",
+		"messages": [
+			{"role": "user", "content": "  "},
+			{"role": "user", "content": "a real memory about penguins"},
+			{"role": "user", "content": ""}
+		]
+	}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, float64(1), out["persisted"])
+	assert.Equal(t, float64(2), out["skipped"])
+	reasons, ok := out["gate_reason_counts"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(2), reasons["empty_message"])
+}
+
+func TestBench_Add_ConcurrentIngest_PreservesWriteOrder(t *testing.T) {
+	// Writes must persist in request order even though embedding is parallel:
+	// two similar messages merge into one memory, and the merged summary
+	// concatenates their summaries in request order ("first\nsecond"). If the
+	// sequential phase reordered writes, the concatenation would flip.
+	ts := newTestServer(t, GateModeOff)
+
+	code, out := postJSON(t, ts.URL+"/v1/add", `{
+		"user_id": "u1",
+		"messages": [
+			{"role": "user", "content": "alpha beta gamma"},
+			{"role": "user", "content": "alpha beta gamma delta"}
+		]
+	}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, float64(2), out["persisted"])
+
+	code, out = postJSON(t, ts.URL+"/v1/search", `{"user_id":"u1","query":"gamma","top_k":3}`)
+	require.Equal(t, http.StatusOK, code)
+	results, ok := out["results"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, results)
+	top := results[0].(map[string]any)["content"].(string)
+	assert.True(t, strings.HasPrefix(top, "alpha beta gamma\n"),
+		"merged memory must concatenate summaries in request order, got %q", top)
+}
+
+func TestBench_Add_EmbeddingFailure_Returns500(t *testing.T) {
+	st := memory.NewStore()
+	deps := core.WriteDeps{
+		Store:       st,
+		Gate:        core.DefaultSignificanceGate(),
+		PatternSep:  core.DefaultPatternSeparation(),
+		WeightDecay: core.DefaultWeightDecayEngine(),
+		Embedder:    &failingBatchEmbedder{KeywordEmbedder: embedder.NewKeywordEmbedder(models.DefaultEmbeddingDim)},
+		WorkingMem:  store.NewWorkingMemoryBuffer(20),
+	}
+	srv, err := NewServer(deps, Options{GateMode: GateModeOff})
+	require.NoError(t, err)
+	ts := httptest.NewServer(srv.Routes())
+	t.Cleanup(ts.Close)
+
+	code, _ := postJSON(t, ts.URL+"/v1/add",
+		`{"user_id":"u1","messages":[{"content":"a memory"}]}`)
+	assert.Equal(t, http.StatusInternalServerError, code)
+}
+
+func TestBench_Add_NonBatchEmbedder_FallsBackSequential(t *testing.T) {
+	// An embedder without batch support (stub) must degrade to the sequential
+	// per-message pipeline, not fail the request.
+	st := memory.NewStore()
+	deps := core.WriteDeps{
+		Store:       st,
+		Gate:        core.DefaultSignificanceGate(),
+		PatternSep:  core.DefaultPatternSeparation(),
+		WeightDecay: core.DefaultWeightDecayEngine(),
+		Embedder:    embedder.NewStubEmbedder(),
+		WorkingMem:  store.NewWorkingMemoryBuffer(20),
+	}
+	srv, err := NewServer(deps, Options{GateMode: GateModeOff})
+	require.NoError(t, err)
+	ts := httptest.NewServer(srv.Routes())
+	t.Cleanup(ts.Close)
+
+	code, out := postJSON(t, ts.URL+"/v1/add", `{
+		"user_id": "u1",
+		"messages": [{"content": "one"}, {"content": "two"}, {"content": "three"}]
+	}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, float64(3), out["persisted"])
+}
+
+func TestBench_Add_ConcurrentIngest_OptionsPlumbed(t *testing.T) {
+	// IngestWorkers / EmbedBatchSize must reach the batch embedder: a tiny
+	// batch size of 1 with 2 workers still persists everything.
+	st := memory.NewStore()
+	deps := core.WriteDeps{
+		Store:       st,
+		Gate:        core.DefaultSignificanceGate(),
+		PatternSep:  core.DefaultPatternSeparation(),
+		WeightDecay: core.DefaultWeightDecayEngine(),
+		Embedder:    embedder.NewKeywordEmbedder(models.DefaultEmbeddingDim),
+		WorkingMem:  store.NewWorkingMemoryBuffer(20),
+	}
+	srv, err := NewServer(deps, Options{
+		GateMode:       GateModeOff,
+		IngestWorkers:  2,
+		EmbedBatchSize: 1,
+	})
+	require.NoError(t, err)
+	ts := httptest.NewServer(srv.Routes())
+	t.Cleanup(ts.Close)
+
+	code, out := postJSON(t, ts.URL+"/v1/add", `{
+		"user_id": "u1",
+		"messages": [
+			{"content": "a"}, {"content": "b"}, {"content": "c"},
+			{"content": "d"}, {"content": "e"}
+		]
+	}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, float64(5), out["persisted"])
 }

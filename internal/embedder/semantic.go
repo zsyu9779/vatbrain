@@ -18,12 +18,21 @@ type SemanticProvider interface {
 }
 
 // OpenAIProvider talks to any OpenAI-compatible /embeddings endpoint
-// (OpenAI, Voyage, local vLLM/llama.cpp servers).
+// (OpenAI, Voyage, Zhipu, local vLLM/llama.cpp servers).
 type OpenAIProvider struct {
 	APIKey     string
 	BaseURL    string // e.g. https://api.openai.com/v1 or https://api.voyageai.com/v1
 	Model      string
 	HTTPClient *http.Client
+	// MaxRetries bounds retries per chunk on rate-limit responses (HTTP 429
+	// or Zhipu error codes 1302/1305). 0 uses the default (5). Applies to
+	// EmbedBatch only; the single-text Embed keeps its original one-shot
+	// behavior.
+	MaxRetries int
+	// RetryBackoff is the initial backoff before the first retry; it doubles
+	// per attempt up to 8s. 0 uses the default (250ms). Applies to EmbedBatch
+	// only.
+	RetryBackoff time.Duration
 }
 
 // NewOpenAIProvider creates an OpenAI-compatible semantic provider.
@@ -42,9 +51,15 @@ type openAIEmbedRequest struct {
 }
 
 type openAIEmbedResponse struct {
-	Data []struct {
-		Embedding []float64 `json:"embedding"`
-	} `json:"data"`
+	Data []openAIEmbedData `json:"data"`
+}
+
+// openAIEmbedData is one item of the /embeddings data array. Index, when
+// present, is the input position the vector belongs to; providers that return
+// items out of order rely on it.
+type openAIEmbedData struct {
+	Embedding []float64 `json:"embedding"`
+	Index     int       `json:"index"`
 }
 
 // Embed calls the /embeddings endpoint and returns the first vector.

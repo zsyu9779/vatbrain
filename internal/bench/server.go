@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/vatbrain/vatbrain/internal/core"
+	"github.com/vatbrain/vatbrain/internal/embedder"
 	"github.com/vatbrain/vatbrain/internal/models"
 	"github.com/vatbrain/vatbrain/internal/provider"
 	"github.com/vatbrain/vatbrain/internal/store"
@@ -62,6 +63,13 @@ type Options struct {
 	// MaxMessagesPerAdd caps the messages in one /v1/add request. 0 uses the
 	// default (2000).
 	MaxMessagesPerAdd int
+	// IngestWorkers is the size of the parallel embedding worker pool for
+	// /v1/add ingestion. 0 uses the default (32); values are clamped to
+	// [1, 64] (docs/v0.3/05-agent-memory-handoff.md 【并发调研】).
+	IngestWorkers int
+	// EmbedBatchSize is the maximum texts per embedding request during
+	// ingestion. 0 uses the default (64 — the provider hard limit).
+	EmbedBatchSize int
 }
 
 // Server is the HTTP evaluation server. It holds the same WriteDeps the
@@ -95,6 +103,15 @@ func NewServer(deps core.WriteDeps, opts Options) (*Server, error) {
 	if opts.MaxMessagesPerAdd <= 0 {
 		opts.MaxMessagesPerAdd = defaultMaxMessagesPerAdd
 	}
+	// Wrap the embedder in a concurrent batch embedder so /v1/add can embed
+	// all its messages in parallel (worker pool, 64 texts per request) and
+	// then persist them sequentially — SQLite is a single writer. Embed
+	// (single text) delegates unchanged; an embedder without batch support
+	// makes handleAdd fall back to the sequential pipeline.
+	deps.Embedder = embedder.NewBatchEmbedder(deps.Embedder, embedder.BatchOptions{
+		Workers:   opts.IngestWorkers,
+		BatchSize: opts.EmbedBatchSize,
+	})
 	return &Server{deps: deps, opts: opts, store: deps.Store}, nil
 }
 
@@ -248,6 +265,13 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	persisted, skipped := 0, 0
 	reasons := make(map[string]int)
 
+	// Phase 1: build the write events and embed every non-empty summary in
+	// parallel (worker pool, 64 texts per request, rate-limit retries). The
+	// gate still runs per message in phase 2, so the significance-gate
+	// semantics are unchanged — the only cost of pre-embedding is that
+	// gate-on mode embeds messages that later get gated out.
+	events := make([]core.WriteEvent, 0, len(req.Messages))
+	indexes := make([]int, 0, len(req.Messages))
 	for i, msg := range req.Messages {
 		content := strings.TrimSpace(msg.Content)
 		if content == "" {
@@ -255,20 +279,43 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 			reasons["empty_message"]++
 			continue
 		}
+		events = append(events, s.eventFor(content, msg.ChatTime))
+		indexes = append(indexes, i)
+	}
 
-		event := s.eventFor(content, msg.ChatTime)
-		res, err := core.WriteMemory(r.Context(), s.deps, event,
-			req.UserID, s.opts.Language, "", s.opts.TaskType)
+	var embeddings [][]float32
+	if be, ok := s.deps.Embedder.(embedder.BatchCapable); ok {
+		summaries := make([]string, len(events))
+		for k, ev := range events {
+			summaries[k] = ev.Summary
+		}
+		vecs, err := be.EmbedBatch(r.Context(), summaries)
+		if err != nil && !errors.Is(err, embedder.ErrBatchNotSupported) {
+			slog.Error("bench: parallel embedding failed", "messages", len(events), "err", err)
+			respondJSON(w, http.StatusInternalServerError, AddResponse{
+				Error:       "embedding failed",
+				FailedIndex: 0,
+			})
+			return
+		}
+		if err == nil {
+			embeddings = vecs
+		}
+	}
+
+	// Phase 2: sequential writes in request order. The bench harness can
+	// resume after a mid-batch failure (counts so far + failing index), so
+	// earlier messages are never re-written on retry.
+	for k, event := range events {
+		res, err := s.writeOne(r.Context(), event, embeddings, k, req.UserID)
 		if err != nil {
-			// Report the counts already processed so the harness can resume
-			// cleanly instead of re-writing earlier messages on retry.
-			slog.Error("bench: write failed", "index", i, "err", err)
+			slog.Error("bench: write failed", "index", indexes[k], "err", err)
 			respondJSON(w, http.StatusInternalServerError, AddResponse{
 				Persisted:       persisted,
 				Skipped:         skipped,
 				GateReasonCount: reasons,
 				Error:           "write failed",
-				FailedIndex:     i,
+				FailedIndex:     indexes[k],
 			})
 			return
 		}
@@ -286,6 +333,20 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 		Skipped:         skipped,
 		GateReasonCount: reasons,
 	})
+}
+
+// writeOne persists one event through the shared write pipeline. With
+// precomputed embeddings available (the concurrent path) it uses
+// WriteMemoryWithEmbedding so the batch's embedding work is not repeated;
+// without them (sequential fallback) it uses WriteMemory, which embeds
+// internally.
+func (s *Server) writeOne(ctx context.Context, event core.WriteEvent, embeddings [][]float32, k int, userID string) (core.WriteResult, error) {
+	if embeddings != nil {
+		return core.WriteMemoryWithEmbedding(ctx, s.deps, event, embeddings[k],
+			userID, s.opts.Language, "", s.opts.TaskType)
+	}
+	return core.WriteMemory(ctx, s.deps, event,
+		userID, s.opts.Language, "", s.opts.TaskType)
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {

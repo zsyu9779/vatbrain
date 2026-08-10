@@ -67,17 +67,79 @@ type WriteResult struct {
 func WriteMemory(ctx context.Context, deps WriteDeps, event WriteEvent,
 	projectID, language, entityID string, taskType models.TaskType) (WriteResult, error) {
 
+	prepared, err := prepareWriteEvent(ctx, deps, event, projectID)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if !prepared.gate.ShouldPersist {
+		return WriteResult{
+			Persisted:  false,
+			GateReason: prepared.gate.Reason,
+		}, nil
+	}
+
+	// Generate embedding.
+	embedding, err := deps.Embedder.Embed(ctx, event.Summary)
+	if err != nil {
+		return WriteResult{}, fmt.Errorf("%w: %v", errWritePipelineEmbed, err)
+	}
+
+	return writeMemoryPersist(ctx, deps, event, prepared, embedding,
+		projectID, language, entityID, taskType)
+}
+
+// WriteMemoryWithEmbedding runs the write pipeline with a caller-supplied
+// embedding for event.Summary, skipping the internal Embed call. The
+// vatbrain-bench entrypoint uses it to embed an entire /v1/add batch
+// concurrently and then persist messages sequentially (SQLite is a single
+// writer) — the gate, search, merge, and persistence order is identical to
+// WriteMemory. The embedding must be the vector for the exact summary text.
+func WriteMemoryWithEmbedding(ctx context.Context, deps WriteDeps, event WriteEvent, embedding []float32,
+	projectID, language, entityID string, taskType models.TaskType) (WriteResult, error) {
+
+	prepared, err := prepareWriteEvent(ctx, deps, event, projectID)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if !prepared.gate.ShouldPersist {
+		return WriteResult{
+			Persisted:  false,
+			GateReason: prepared.gate.Reason,
+		}, nil
+	}
+	if len(embedding) == 0 {
+		return WriteResult{}, fmt.Errorf("%w: empty embedding", errWritePipelineEmbed)
+	}
+
+	return writeMemoryPersist(ctx, deps, event, prepared, embedding,
+		projectID, language, entityID, taskType)
+}
+
+// preparedWrite carries the pre-embedding half of the write pipeline: the
+// validated dependency check, the significance-gate verdict, and the
+// prediction-error score.
+type preparedWrite struct {
+	gate     GateResult
+	surprise float64
+}
+
+// prepareWriteEvent validates the pipeline dependencies, fetches the
+// project's working-memory cycles, evaluates the significance gate, and
+// scores the prediction-error signal. It is shared by WriteMemory and
+// WriteMemoryWithEmbedding so the gate → surprise → persist order never
+// drifts between the sequential and precomputed-embedding paths.
+func prepareWriteEvent(ctx context.Context, deps WriteDeps, event WriteEvent, projectID string) (preparedWrite, error) {
 	if deps.Gate == nil {
-		return WriteResult{}, errWritePipelineNoGate
+		return preparedWrite{}, errWritePipelineNoGate
 	}
 	if deps.Store == nil {
-		return WriteResult{}, errWritePipelineNoStore
+		return preparedWrite{}, errWritePipelineNoStore
 	}
 	if deps.PatternSep == nil {
-		return WriteResult{}, errWritePipelinePatternSep
+		return preparedWrite{}, errWritePipelinePatternSep
 	}
 	if deps.WeightDecay == nil {
-		return WriteResult{}, errWritePipelineWeightDecay
+		return preparedWrite{}, errWritePipelineWeightDecay
 	}
 
 	// Fetch working-memory cycles accumulated for this project.
@@ -90,25 +152,23 @@ func WriteMemory(ctx context.Context, deps WriteDeps, event WriteEvent,
 
 	// Evaluate significance gate (four conditions, all triggerable).
 	gateResult := deps.Gate.Evaluate(ctx, event, workingMemory)
-	if !gateResult.ShouldPersist {
-		return WriteResult{
-			Persisted:  false,
-			GateReason: gateResult.Reason,
-		}, nil
-	}
 
 	// Score the prediction-error signal (independent of the gate decision).
 	scorer := deps.Surprise
 	if scorer == nil {
 		scorer = DefaultSurpriseScorer()
 	}
-	surprise := scorer.Score(event)
 
-	// Generate embedding.
-	embedding, err := deps.Embedder.Embed(ctx, event.Summary)
-	if err != nil {
-		return WriteResult{}, fmt.Errorf("%w: %v", errWritePipelineEmbed, err)
-	}
+	return preparedWrite{gate: gateResult, surprise: scorer.Score(event)}, nil
+}
+
+// writeMemoryPersist runs the post-embedding half of the write pipeline:
+// similarity search, pattern-separation merge, persistence, link-on-write,
+// and working-memory push.
+func writeMemoryPersist(ctx context.Context, deps WriteDeps, event WriteEvent, prepared preparedWrite,
+	embedding []float32, projectID, language, entityID string, taskType models.TaskType) (WriteResult, error) {
+
+	surprise := prepared.surprise
 
 	// Search for similar existing memories to check pattern-separation merge.
 	candidates, err := deps.Store.SearchEpisodic(ctx, store.EpisodicSearchRequest{
@@ -171,7 +231,7 @@ func WriteMemory(ctx context.Context, deps WriteDeps, event WriteEvent,
 		return WriteResult{
 			MemoryID:    existing.ID,
 			Persisted:   true,
-			GateReason:  gateResult.Reason,
+			GateReason:  prepared.gate.Reason,
 			MergeAction: models.MergeActionUpdatedExisting,
 			Weight:      newWeight,
 		}, nil
@@ -218,7 +278,7 @@ func WriteMemory(ctx context.Context, deps WriteDeps, event WriteEvent,
 	return WriteResult{
 		MemoryID:    memoryID,
 		Persisted:   true,
-		GateReason:  gateResult.Reason,
+		GateReason:  prepared.gate.Reason,
 		MergeAction: models.MergeActionCreatedNew,
 		Weight:      weight,
 	}, nil

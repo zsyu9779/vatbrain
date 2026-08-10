@@ -51,6 +51,8 @@ func run() error {
 	gateMode := flag.String("gate", "", "significance gate mode: off|on (default off; env VATBRAIN_BENCH_GATE_MODE)")
 	language := flag.String("language", "", "memory language (default en; env VATBRAIN_BENCH_LANGUAGE)")
 	dataDir := flag.String("data", "", "data dir for the benchmark SQLite DB (default $VATBRAIN_BENCH_DATA_DIR or ~/.vatbrain/bench)")
+	embedWorkers := flag.Int("embed-workers", 32, "parallel embedding workers for /v1/add ingestion, 1-64 (env VATBRAIN_BENCH_EMBED_WORKERS)")
+	embedBatch := flag.Int("embed-batch", 64, "texts per embedding request, provider hard limit 64 (env VATBRAIN_BENCH_EMBED_BATCH)")
 	flag.Parse()
 
 	mode := *gateMode
@@ -71,6 +73,20 @@ func run() error {
 	}
 	if lang == "" {
 		lang = "en"
+	}
+
+	// Ingestion concurrency knobs: env overrides flags, mirroring the other
+	// VATBRAIN_BENCH_* settings. Values are clamped inside the embedder
+	// (workers to [1, 64], batch to [1, 64]).
+	if v := os.Getenv("VATBRAIN_BENCH_EMBED_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			*embedWorkers = n
+		}
+	}
+	if v := os.Getenv("VATBRAIN_BENCH_EMBED_BATCH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			*embedBatch = n
+		}
 	}
 
 	token := os.Getenv("VATBRAIN_BENCH_API_TOKEN")
@@ -129,10 +145,12 @@ func run() error {
 	}
 
 	srv, err := bench.NewServer(deps, bench.Options{
-		GateMode: gm,
-		Language: lang,
-		TaskType: models.TaskTypeFeature,
-		Token:    token,
+		GateMode:       gm,
+		Language:       lang,
+		TaskType:       models.TaskTypeFeature,
+		Token:          token,
+		IngestWorkers:  *embedWorkers,
+		EmbedBatchSize: *embedBatch,
 	})
 	if err != nil {
 		return err
