@@ -12,6 +12,14 @@
 - **hermes**: `~/.hermes/hermes-agent`（HEAD 52920747e）+ 插件 `~/.hermes/plugins/vatbrain/` 已激活（config.yaml memory.provider: vatbrain）
 - **战略决策（2026-08-08，2026-08-10 确认全面转向）**: 存储全面转向 SQLite（modernc.org/sqlite），Neo4j+pgvector/Redis/MinIO 弃用；概念不变（边表=图、BLOB=向量）；新增能力只实现 SQLite 后端；旧后端代码保留兼容、不再投入、待清理
 
+## 最近工作（2026-08-10）— v0.4 草案制定（评测驱动精修 + 价值证明）
+
+- 综合分析三份输入：User Memory 轨评测（LME 74.2/HaluMem 65.0/LoCoMo 57.0，短板=时序 15%/52.6、动态更新 28.9、事实召回 43.6）、Agent 轨 null result（域×协议不匹配、注入=其他题完整 prompt）、遗留 feature（issue #1 余 12 项）→ `docs/v0.4/00-draft.md`
+- 核心判断：主线 Measure 未闭环 → v0.4 = 修短板（时序/动态更新/检索增强）+ 价值证明（Agent 轨二轮换域/协议 + 注入压制）
+- 范围：P0 六项（时序深入、并发 ingestion、judge 对齐重跑、Update Tracking、RRF+query expansion、延迟微基准）；P1 四项（Agent 轨二轮、Context 精简、DX 数据化、反事实）；暂缓压缩残差/自适应衰减/冷分层；多级存储降级为文件备份；Team Memory 不入
+- 5 个待确认决策点（定位、Agent 轨域选择、时序签名范围、反事实排期、准出目标幅度）
+- 未提交 benchmark 测试结果（后台 bmdoe0tuy 运行中）
+
 ## 最近工作（2026-08-10）— issue #1 状态同步（checkbox 2/20 → 8/20）
 
 - 发现 issue #1 滞后于代码库（agent_context 曾声称"checkbox 已勾选"，实际仅 2/20）。核对代码证据后同步：
