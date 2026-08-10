@@ -74,6 +74,12 @@ func main() {
 
 	srv := provider.NewServer(deps)
 	srv.Consolidation = a.Consolidation
+	// VATBRAIN_GATE_MODE=off force-confirms every synced turn, bypassing the
+	// significance gate (benchmark kernel measurement; mirrors internal/bench).
+	if os.Getenv("VATBRAIN_GATE_MODE") == "off" {
+		srv.ForceConfirm = true
+		slog.Info("vatbrain-provider: significance gate disabled (VATBRAIN_GATE_MODE=off)")
+	}
 	go func() {
 		<-srv.ShutdownSignal()
 		stop()

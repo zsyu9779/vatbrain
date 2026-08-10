@@ -134,6 +134,18 @@ type MemoryStore interface {
 	Close() error
 }
 
+// EpisodicDeleteStore is the optional capability to delete all episodic
+// memories for a project — how the OmniMemEval benchmark entrypoint isolates
+// per-user evaluation runs (docs/v0.3/tech-specs/03-omnimemeval-benchmark.md).
+// SQLite and the in-memory store implement it; backends that do not (e.g. the
+// deprecated Neo4j+pgvector store) omit the methods, and the benchmark
+// entrypoint reports the backend as unsupported via a type assertion.
+type EpisodicDeleteStore interface {
+	// DeleteEpisodicByProject removes every episodic memory under projectID
+	// and returns how many rows were deleted.
+	DeleteEpisodicByProject(ctx context.Context, projectID string) (int, error)
+}
+
 // RuleConflictStore is the optional conflict-governance capability a backend
 // may implement on top of MemoryStore (ROADMAP v1.0 冲突协调引擎). SQLite and
 // the in-memory store implement it; backends that do not (e.g. the deprecated

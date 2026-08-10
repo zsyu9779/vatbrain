@@ -70,6 +70,15 @@ func (c *HotCache[K, V]) Remove(key K) {
 	c.mu.Unlock()
 }
 
+// Clear drops every cached entry. Callers that mutate persisted state that a
+// cached result mirrors (e.g. a project-scoped delete) must call Clear so the
+// cache cannot serve rows that no longer exist.
+func (c *HotCache[K, V]) Clear() {
+	c.mu.Lock()
+	c.cache.Purge()
+	c.mu.Unlock()
+}
+
 // Len returns the current number of items in the cache.
 func (c *HotCache[K, V]) Len() int {
 	c.mu.RLock()

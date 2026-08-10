@@ -282,3 +282,64 @@
 **收尾**：合并 `feature/backlog-implementation` → main（当前工作树干净，21/21 测试全绿）
 
 - Hermes 集成全部完成并已激活（用户授权 config.yaml memory.provider: vatbrain）
+
+---
+
+## 2026-08-09 — HaluMem 真实评测（smoke 完成 + 全量进行中）
+
+- **端点**：DeepSeek chat（deepseek-v4-flash）+ 智谱 embedding（embedding-3，2048 维）。
+- **Smoke 结果**（user 0，164 题，池修复前）：整体 **37.8%**；Memory Boundary **95%**、Basic Fact Recall **10%**。诊断出检索缺陷：`SearchEpisodic` embedding 候选池只取 weight 前 100（上限 500）→ 修复为 5000（`embeddingRankPool`，commit `3cf67ad`）。
+- **全量评测完成（User Memory 轨 3 benchmark）**：
+  - **HaluMem 64.97%**（3460 题，20 users）：Boundary 96.3%（顶尖）、Conflict 70.5%、Generalization 58.2%、Multi-hop 51.3%、Basic Fact 43.6%、Dynamic Update 28.9%
+  - **LoCoMo 57.0%**（914 题）：Single Hop 74.6%、Multi-hop 51.3%、Open Domain 56.1%、Temporal 15.0%（时序短板）
+  - **LongMemEval 74.2%**（500 题）
+- **过程修复**（OmniMemEval 克隆侧）：`extract_label_json` 三连修、judge prompt 改"只输出 JSON"、`LLM_DISABLE_THINKING=1` 开关。
+- 教训：bench 重启必须 source `.env.bench`；后台 Bash watcher 会被杀，改用 Monitor；三路并行需独立 bench 实例。
+
+## 2026-08-09 — OmniMemEval 评测框架评估（研究任务，未改代码）
+
+- 克隆 `MemTensor/OmniMemEval` 到 /tmp/OmniMemEval，评估其作为 VatBrain 记忆能力评测入口的可行性。
+- 结论：工程/架构/文档质量高（adapter 层 15 个 backend、六阶段 pipeline、LLM-as-judge+多指标）；风险=发布方 MemTensor 是 MemOS 母公司（利益冲突需复核）、复现分与官方分差距大、PersonaMem v2 多数 backend 贴近随机。
+- 对 VatBrain 的启示：User Memory 线可写 adapter 评测；**HaluMem 与 ConflictResolver/Pitfall/decay 设计高度契合**。
+
+## 2026-08-09 — backlog issue #1 P0+P1 全部完成 + 合并 main
+
+- **P1-6 Surprise Score**：`models.EpisodicMemory/SemanticMemory.SurpriseScore` + sqlite 迁移；`core.SurpriseScorer`（纠正 0.7/行为改变 0.5/显式指令 0）；`WeightDecayEngine.SurpriseHalfLifeBoost`（最高 3× 半衰期）；检索 `EpisodicSearchRequest.SurpriseBoost`。文档：`docs/v0.3/tech-specs/01-surprise-score.md`
+- **P1-5 ConflictResolver**：`core.ConflictDetector`（极性+bigram，CJK-safe）+ `ConflictResolver`（高 trust 覆盖）；`models.RuleConflict` + sqlite 表；`store.RuleConflictStore` 可选能力接口；MCP `detect/list/resolve_rule_conflicts`。文档：`docs/v0.3/tech-specs/02-conflict-resolver.md`
+- **P1-7 更多 Watcher 适配器**：`codex.go`（OpenAI Codex 会话 JSONL）+ `openclaw.go`（OpenClaw 记忆 markdown）；配置 `VATBRAIN_CODEX_SESSIONS_PATH`/`VATBRAIN_OPENCLAW_MEMORY_PATH`。
+- 验收：`go test ./internal/...` **547/22 包全绿** + go vet 干净；issue #1 checkbox 勾选；feature 分支快进合并 main。
+- 用户指令：P1 清完即视为完成，P2/P3 暂缓。
+
+## 2026-08-09 — Logo 三方向设计（另一会话，已并入 main）
+
+- README 首屏加 VatBrain logo（`assets/logo/vatbrain-logo.png`）；`docs/superpowers/` 已 .gitignore
+
+---
+
+## 2026-08-10 — Agent Memory 轨 benchmark：规划 + 打通 + 全量（已结束）
+
+### 规划 + 打通（前半程，结果见 docs/v0.3/09 全量章节）
+
+- **目标**：Hermes + vatbrain 插件跑 EvoAgentBench 5 域，`memory_train_backup_test` 协议，对比 baseline（无记忆）vs vatbrain 提升。规划文档：`docs/v0.3/07-agent-benchmark-plan.md`。
+- **OmniMemEval 克隆侧新增**（/tmp/OmniMemEval，git 未提交）：
+  - `scripts/agentbench/agents/hermes.py` — HermesAgentAdapter（`hermes chat -q ... -Q --yolo --reasoning none`，每任务独立会话；注入 VATBRAIN_PROVIDER_BIN/HERMES_HOME/GATE_MODE/语义 embedding env）
+  - `agents/__init__.py` 注册 `"hermes"`
+  - `configs/agentbench/agents/hermes.yaml`（gate off + 语义 embedding）+ `hermes-baseline.yaml`（`/tmp/hermes-baseline`，memory.provider 空 → 无记忆 baseline）
+  - `configs/agentbench/memory_plugins/vatbrain.yaml`（clear/backup/restore = pkill vatbrain-provider + 操作 ~/.hermes/vatbrain/vatbrain.db）
+  - `.env.agent`（DeepSeek v4-flash judge + 智谱 embedding-3 + VATBRAIN_EMBEDDER_SEMANTIC_*）
+- **vatbrain 仓库改动**（已提交 `99a3ce3`，feature 分支）：provider daemon 加 `VATBRAIN_GATE_MODE=off`（ForceConfirm，sync_turn 强制 UserConfirmed，对齐 bench GateModeOff）。已重新构建安装到 `~/.hermes/vatbrain/bin/vatbrain-provider`。
+- **关键发现**：
+  1. **provider 从未激活**：插件 `is_available()` 在 `initialize()` 前跑，`_hermes_home` 空 → 解析不到二进制 → 注入 `VATBRAIN_PROVIDER_BIN` 修复。
+  2. **SignificanceGate 挡掉所有首次写入**：单会话单任务协议下 4 门控全不满足（"遗忘是默认" 假设长会话跨周期重复）→ gate off 是主测量，**gate-on 在此协议的代价本身就是重要结论**。
+  3. 短会话 async sync_turn 写入实测能存活（local SQLite 快），无需改插件。
+- **Smoke 结果**（reasoning 域，train 2 题 + test 2 题）：train pass@1=0.50、**test pass@1=1.00**；lifecycle clear/backup/restore 全 0；backup 39.3K；DB 记忆写入 6 条。
+- **⚠️ 工具禁用关键修复**：`-t ""` 在 argparse 里变 None → 回落全部工具（agent 会 tool-loop）；改用无效工具集名 `-t vatbrain_none` → 真禁用。任务从 5+ 分钟降到 ~10-30 秒。全量必须用此配置。
+- **⚠️ MiniMax 偶发挂死**：约 1/3 请求挂在 MiniMax（stale connection，重试新进程可恢复）。用看门狗自动杀 >90s（10 题样本）/ >240s（全量）的 hermes 进程。
+
+### 全量结果 + 生效验证（后半程，2026-08-10 上午收尾）
+
+- **全量跑完**：vatbrain（478 train + 100 test）+ baseline（100 test）全部完成。结果已写入 `docs/v0.3/09-agent-benchmark-results.md`。
+- **核心结果**：test pass@1 **baseline 21.00% = vatbrain 21.00%（对齐 100 题持平）**；26 个逐题翻转（13 错→对 / 13 对→错）净零 → **null result**。10 样本的 10%→20% 提升是假阳性，未复现。
+- **⚠️ 生效验证（重要教训）**：最初因检索错字段——查 `~/.hermes/state.db` 的 `content` 列，而记忆注入实际写入 **`api_content` 列**——误判"记忆未生效"。更正后确认**全链路生效**：provider 每会话 spawn/initialize（agent.log 1200+ 行）、DB 729 条 episodic、test 窗口 **1209 条 `<memory-context>` 注入**（648 任务 prompt + 560 feedback 记忆）。
+- **根因**：域 × 协议不匹配——注入的是其他题的完整 prompt + 该题 verifier 答案，对独立求解的数学题**无可迁移价值**。train/test 互不重叠 → 记忆注入 ≈ 无用上下文。
+- **下一步建议**：换迁移信号存在的域/协议（代码修补、同题不同 seed 等），或多次重复试验区分噪声。
