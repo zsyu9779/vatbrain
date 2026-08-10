@@ -59,6 +59,13 @@ type Server struct {
 	// memoryWrite tracks mirrored built-in writes for replace/remove
 	// provenance (DERIVED_FROM edges).
 	memoryWrite *memoryWriteIndex
+
+	// ForceConfirm bypasses the significance gate by marking every synced
+	// turn as user-confirmed (WriteEvent.UserConfirmed = true). This is the
+	// benchmark's gate "off" mode — it measures the storage/retrieval kernel
+	// rather than VatBrain's "forgetting is default" gating behaviour, mirroring
+	// internal/bench GateModeOff. Enabled via VATBRAIN_GATE_MODE=off.
+	ForceConfirm bool
 }
 
 // NewServer creates a JSON-RPC server bound to the given write-pipeline deps.
@@ -278,6 +285,10 @@ func (s *Server) handleSyncTurn(ctx context.Context, req rpcRequest) rpcResponse
 	}
 
 	event := s.deriver(p.UserContent, p.AssistantContent)
+	if s.ForceConfirm {
+		// Gate "off" mode: persist every turn (benchmark kernel measurement).
+		event.UserConfirmed = true
+	}
 	if strings.TrimSpace(event.Summary) == "" {
 		return newResponse(req.ID, syncTurnResult{Persisted: false, GateReason: "empty_summary"})
 	}

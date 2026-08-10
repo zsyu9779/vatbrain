@@ -89,6 +89,32 @@ func TestMemoryStore_WriteGetEpisodic(t *testing.T) {
 	assert.Equal(t, mem.ProjectID, got.ProjectID)
 }
 
+func TestMemoryStore_DeleteEpisodicByProject(t *testing.T) {
+	s := memory.NewStore()
+
+	mem := makeEpisodic() // ProjectID "test-project"
+	other := makeEpisodic()
+	other.ProjectID = "other-project"
+	require.NoError(t, s.WriteEpisodic(ctx, mem))
+	require.NoError(t, s.WriteEpisodic(ctx, other))
+
+	n, err := s.DeleteEpisodicByProject(ctx, "test-project")
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	_, err = s.GetEpisodic(ctx, mem.ID)
+	assert.Error(t, err)
+
+	got, err := s.GetEpisodic(ctx, other.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "other-project", got.ProjectID)
+
+	// Deleting a project with no memories returns 0, not an error.
+	n, err = s.DeleteEpisodicByProject(ctx, "test-project")
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+}
+
 func TestMemoryStore_GetEpisodic_NotFound(t *testing.T) {
 	s := memory.NewStore()
 	_, err := s.GetEpisodic(ctx, uuid.New())

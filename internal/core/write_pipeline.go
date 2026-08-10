@@ -43,6 +43,12 @@ type WriteDeps struct {
 	// WorkingMem accumulates accepted summaries for cross-cycle persistence.
 	// May be nil, in which case cross-cycle gating sees an empty buffer.
 	WorkingMem *store.WorkingMemoryBuffer
+	// SkipLinkOnWrite disables RELATES_TO edge creation. The OmniMemEval bench
+	// entrypoint sets it: edges are not needed for benchmark scoring, and
+	// LinkOnWrite re-embeds the new summary against up to 20 candidates, so
+	// skipping it avoids up to ~40 embedding API calls per write when a paid
+	// semantic embedder is configured.
+	SkipLinkOnWrite bool
 }
 
 // WriteResult summarises the outcome of WriteMemory.
@@ -197,9 +203,12 @@ func WriteMemory(ctx context.Context, deps WriteDeps, event WriteEvent,
 		return WriteResult{}, fmt.Errorf("%w: %v", errWritePipelinePersist, err)
 	}
 
-	// Link to related memories (best-effort).
-	LinkOnWrite(ctx, deps.Embedder, deps.Store, memoryID, event.Summary,
-		projectID, entityID, taskType)
+	// Link to related memories (best-effort). Skippable for batch-import paths
+	// (e.g. the benchmark entrypoint) where RELATES_TO edges are not consumed.
+	if !deps.SkipLinkOnWrite {
+		LinkOnWrite(ctx, deps.Embedder, deps.Store, memoryID, event.Summary,
+			projectID, entityID, taskType)
+	}
 
 	// Push to working-memory cycles for cross-cycle persistence.
 	if deps.WorkingMem != nil {

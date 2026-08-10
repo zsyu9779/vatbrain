@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -157,6 +158,35 @@ func TestSQLite_SearchEpisodic_WithEmbedding(t *testing.T) {
 	assert.Equal(t, m2.ID, results[2].ID)
 }
 
+func TestSQLite_SearchEpisodic_EmbeddingPoolIncludesAll(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// 550 near-uniform memories + 1 distinctive fact, all with the same weight
+	// — the old SQL weight pre-limit (pool 500) could skip the distinctive row
+	// entirely, pinning pinpoint-fact recall. The embedding pool must rank the
+	// full project candidate set.
+	const distractors = 550
+	for i := 0; i < distractors; i++ {
+		m := makeEpisodic("p", "go", "debug", fmt.Sprintf("distractor %d", i))
+		m.ContextVector = []float32{0, 1, 0}
+		require.NoError(t, s.WriteEpisodic(ctx, m))
+	}
+	fact := makeEpisodic("p", "go", "debug", "the golden banana pendant")
+	fact.ContextVector = []float32{1, 0, 0}
+	require.NoError(t, s.WriteEpisodic(ctx, fact))
+
+	results, err := s.SearchEpisodic(ctx, store.EpisodicSearchRequest{
+		ProjectID: "p",
+		Embedding: []float64{1, 0, 0},
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	assert.Equal(t, fact.ID, results[0].ID,
+		"distinctive memory must rank top even beyond the old 500-pool")
+}
+
 func TestSQLite_SearchEpisodic_NoEmbedding(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -240,6 +270,61 @@ func TestSQLite_MarkObsolete(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
+}
+
+func TestSQLite_DeleteEpisodicByProject(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Two memories in project "p", one in a different project.
+	require.NoError(t, s.WriteEpisodic(ctx, makeEpisodic("p", "go", "debug", "one")))
+	require.NoError(t, s.WriteEpisodic(ctx, makeEpisodic("p", "go", "debug", "two")))
+	require.NoError(t, s.WriteEpisodic(ctx, makeEpisodic("other", "go", "debug", "keep")))
+
+	n, err := s.DeleteEpisodicByProject(ctx, "p")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	// Remaining project is untouched; "p" is empty.
+	results, err := s.SearchEpisodic(ctx, store.EpisodicSearchRequest{
+		ProjectID: "p",
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 0)
+
+	results, err = s.SearchEpisodic(ctx, store.EpisodicSearchRequest{
+		ProjectID: "other",
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+
+	// Deleting a project with no memories returns 0, not an error.
+	n, err = s.DeleteEpisodicByProject(ctx, "p")
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+}
+
+func TestSQLite_DeleteEpisodicByProject_InvalidatesHotCache(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.WriteEpisodic(ctx, makeEpisodic("p", "go", "debug", "one")))
+
+	// A non-embedding search populates the hot cache for project "p".
+	results, err := s.SearchEpisodic(ctx, store.EpisodicSearchRequest{ProjectID: "p", Limit: 10})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+
+	// Delete must purge the cache so the same search cannot serve the deleted row.
+	n, err := s.DeleteEpisodicByProject(ctx, "p")
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	results, err = s.SearchEpisodic(ctx, store.EpisodicSearchRequest{ProjectID: "p", Limit: 10})
+	require.NoError(t, err)
+	assert.Len(t, results, 0)
 }
 
 func TestSQLite_WriteSemantic_Search(t *testing.T) {
