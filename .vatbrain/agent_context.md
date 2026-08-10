@@ -2,9 +2,20 @@
 
 > 每次交互必读必写
 
+## 最近工作（2026-08-10）— v0.4 ticket 03:Update Tracking(信息更新 → 旧记忆显式废弃/提升)✅
+
+- **worktree**: `/tmp/v0.4-wt-03`(分支 `v0.4/ticket-03`,基于 11ff3468 = ticket 02 合入点)。实现 + 测试 + commit 全部在该 worktree,未触碰主仓库
+- **更新检测**: `core.UpdateTracker.DetectUpdate`(纯判定)——复用冲突检测语义基础(同主题 bigram Dice ≥ 0.25 + 指令极性),新增时间维度:新信息 `EffectiveOccurredAt()` 严格晚于旧记忆才构成覆盖;复述守卫(Dice ≥ 0.9 或子串包含)→ 走 pattern-separation append 既有路径;指令极性翻转(不要↔应该)豁免守卫;实体约束(双方锚定 EntityGroup 时须一致)
+- **生效动作**: `ApplyUpdate`——被覆盖旧记忆 `MarkObsolete` 废弃;`SUPERSEDED` 边(新→旧,`at`+`reason` props)记录覆盖关系(可解释可追溯);新记忆权重 ×1.5 提升(ClampWeight,与 ReconsolidationEngine 一致)
+- **自动检测**: 写管线 `writeMemoryPersist` 在 append 合并**之前**判定;被覆盖候选跳过合并(避免新旧内容混入同一条记忆);`WriteDeps.UpdateTracker` 可注入(nil → Default,默认开启)
+- **显式信号**: MCP 工具 `signal_update(memory_id, boost?)`——对既有记忆补发更新信号,返回 detected/applied/pairs/carrier_weight;幂等(已废弃候选跳过,重复执行 0 对、无重复边)
+- **测试**: 检测 7 类判定用例(覆盖/非更新/异主题/精确复述/前缀扩展复述/极性翻转/已废弃跳过/实体约束)、Apply 动作+自定义 boost、RunUpdateTracking 端到端+幂等、写管线 4 条集成(废弃旧/复述仍合并/更早事件不触发/异主题不触发)、MCP 工具 3 条(端到端+幂等/无覆盖/不存在)——全绿;全量测试除已知 docker 依赖(neo4j/pgvector smoke+e2e)外通过
+- **范围约束遵守**: 不新建并列机制(复用 bigramDice/DetectPolarity/MarkObsolete/CreateEdge/UpdateEpisodicWeight/写管线漏斗);未动 provider 协议签名;语义记忆层不新增更新机制(规则层已有 trust 裁决)
+- **待办**: 评测验证在 ticket 06 收口(HaluMem Dynamic Update 28.9% → ≥50% 预期);`docs/v0.4/03-update-tracking.md` 决策表 10 项 + 已知权衡(同义复述风险)
+
 ## 项目状态
 
-- **阶段**: Hermes 集成完成 + backlog issue #1 完成；**Agent Memory 轨 benchmark 全量跑完 = null result（记忆全链路生效但无跨任务迁移价值）；PR #2（OmniMemEval 测评接入）已合入 main** ✅；v0.4 ticket 01/02/04 已完成
+- **阶段**: Hermes 集成完成 + backlog issue #1 完成；**Agent Memory 轨 benchmark 全量跑完 = null result（记忆全链路生效但无跨任务迁移价值）；PR #2（OmniMemEval 测评接入）已合入 main** ✅；**v0.4 ticket 01/02/03/04 已完成并合入 main**
 - **语言**: Go (go 1.25.5) + Python（hermes 插件 + OmniMemEval AgentBench）
 - **分支**: `main`（已合入 PR #2 `feature/omnimemeval-benchmark`）+ v0.4 ticket worktree（01/02/04 各自独立分支合入点）
 - **远端**: `origin/main` 已同步（PR #2 合入后本地已 merge）
@@ -31,3 +42,5 @@
 - **测试**: 迁移回填+幂等、读写回环+回退、过滤/排序(结构化+embed 路径+缓存旁路)、双写路径透传、ParseRelativeTime 9 用例、provider 集成(embed/词法双路径)、bench 端到端——全绿;全量测试除已知 docker 依赖(neo4j/pgvector smoke+e2e)外通过
 - **范围约束遵守**: 未动 provider 协议签名(MCP/api/JSON-RPC 无变化);neo4jpg 旧后端仅不持久化新字段(弃用,不投入)
 - **待办**: 评测验证在 ticket 06 收口(LoCoMo Temporal 15% / LME 52.6% 回升预期)
+
+> ticket 01 条目已由 ticket 04 worker 移入 `.vatbrain/agent_context_archive.md`(2026-08-10)。

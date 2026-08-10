@@ -46,6 +46,7 @@ func RegisteredTools(a *app.App) []server.ServerTool {
 		detectRuleConflictsTool(a),
 		listRuleConflictsTool(a),
 		resolveRuleConflictTool(a),
+		signalUpdateTool(a),
 	}
 
 	// v0.2.1: Agent Memory Watcher tools are only available when the
