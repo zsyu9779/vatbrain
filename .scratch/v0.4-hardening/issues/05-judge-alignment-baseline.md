@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — bench 基建:并发 ingestion + 延迟微基准
 
-**Status:** ready-for-agent
+**Status:** deferred — 真实评测暂缓执行（用户指令 2026-08-10；恢复后先跑此 ticket）
 
 - [ ] 三 benchmark 在 judge 对齐口径下重跑完成(ingestion 用并发路径)
 - [ ] 基线文档:分项分数(LME 六类 / HaluMem 六类 / LoCoMo 四类)、与旧口径差异说明、复现命令

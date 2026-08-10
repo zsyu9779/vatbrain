@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — 时序记忆最小深入;03 — Update Tracking;04 — Retrieval 增强
 
-**Status:** ready-for-agent
+**Status:** deferred — 真实评测暂缓执行（用户指令 2026-08-10；恢复后跑）
 
 - [ ] 三 benchmark 二轮重跑完成(与 05 同口径)
 - [ ] 结果文档:对照基线的分项提升表、准出标准达标情况(docs/v0.4/00-draft §7)、未达标项的根因与下一步

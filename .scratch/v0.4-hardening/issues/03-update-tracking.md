@@ -2,7 +2,7 @@
 
 **What to build:** 当同一实体/主题出现时间上更新的新信息时,系统不再让新旧记忆并存竞争——旧记忆显式标记废弃或降权,新记忆权重提升,使"信息更新后的状态跟踪"可验证(HaluMem Dynamic Update 从 28.9% 显著提升)。复用既有冲突检测(极性+相似度)与再巩固(相似合并)能力,不新建并列机制。
 
-**Blocked by:** 05 — Judge 口径对齐重跑 → v0.4 可比基线（基线先行，内核改动不得污染基线）
+**Blocked by:** None — can start immediately（基线先行原则已随 05 暂缓撤销，2026-08-10）
 
 **Status:** ready-for-agent
 

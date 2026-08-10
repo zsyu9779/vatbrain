@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "ticketFiles": [
+    "issues/01-bench-concurrency-and-latency.md",
+    "issues/02-temporal-memory-minimal.md",
+    "issues/03-update-tracking.md",
+    "issues/04-retrieval-rrf-and-query-expansion.md",
+    "issues/05-judge-alignment-baseline.md",
+    "issues/06-hardening-rerun-results.md",
+    "issues/07-agent-track-seed-variants.md",
+    "issues/08-context-trimming.md",
+    "issues/09-dx-data-ization.md",
+    "issues/10-agent-track-code-repair.md"
+  ],
+  "results": {},
+  "ownership": {
+    "01": {
+      "files": [
+        "internal/bench/",
+        "cmd/vatbrain-bench/",
+        "eval/omnimemeval/"
+      ],
+      "resources": [],
+      "environments": []
+    },
+    "02": {
+      "files": [
+        "internal/store/sqlite/schema.go",
+        "internal/store/sqlite/store.go",
+        "internal/store/sqlite/search.go",
+        "internal/core/write_pipeline.go",
+        "internal/models/episodic_memory.go",
+        "internal/models/semantic_memory.go"
+      ],
+      "resources": [],
+      "environments": []
+    },
+    "03": {
+      "files": [
+        "internal/core/conflict_detector.go",
+        "internal/core/update_tracker.go",
+        "internal/store/sqlite/conflict.go",
+        "internal/mcp/"
+      ],
+      "resources": [],
+      "environments": []
+    },
+    "04": {
+      "files": [
+        "internal/store/sqlite/search.go",
+        "internal/embedder/"
+      ],
+      "resources": [],
+      "environments": []
+    },
+    "05": {
+      "files": [
+        "docs/v0.4/",
+        "eval/omnimemeval/"
+      ],
+      "resources": [],
+      "environments": []
+    },
+    "06": {
+      "files": [
+        "docs/v0.4/"
+      ],
+      "resources": [],
+      "environments": []
+    },
+    "07": {
+      "files": [
+        "internal/provider/",
+        "docs/v0.4/",
+        "eval/omnimemeval/"
+      ],
+      "resources": [],
+      "environments": []
+    },
+    "08": {
+      "files": [
+        "internal/store/sqlite/",
+        "internal/core/"
+      ],
+      "resources": [],
+      "environments": []
+    },
+    "09": {
+      "files": [
+        "README.md",
+        "docs/"
+      ],
+      "resources": [],
+      "environments": []
+    },
+    "10": {
+      "files": [
+        "docs/v0.4/",
+        "eval/omnimemeval/"
+      ],
+      "resources": [],
+      "environments": []
+    }
+  },
+  "capabilities": {
+    "isolatedSubagents": true,
+    "gitWorktrees": true,
+    "cursorMultitask": false
+  },
+  "integration": null,
+  "reviewFixedPoint": "54589408dded2f9f12db10a1e9761bb0ac5df306"
+}

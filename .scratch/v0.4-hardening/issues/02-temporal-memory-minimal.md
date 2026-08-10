@@ -2,7 +2,7 @@
 
 **What to build:** 记忆从"只有文本里的日期前缀"升级为"结构化时间属性":每条情境记忆携带发生时间,检索支持按时间过滤与排序(如"上周"、相对时间解析),使 answer 能基于事件时间推理,而不是依赖摘要里碰巧出现的前缀文本。预期 LoCoMo Temporal 从 15%、LME Temporal 从 52.6% 显著回升。
 
-**Blocked by:** 05 — Judge 口径对齐重跑 → v0.4 可比基线（基线先行，内核改动不得污染基线）
+**Blocked by:** None — can start immediately（基线先行原则已随 05 暂缓撤销，2026-08-10）
 
 **Status:** ready-for-agent
 

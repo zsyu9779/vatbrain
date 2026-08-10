@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 — Judge 口径对齐重跑 → v0.4 可比基线
 
-**Status:** ready-for-agent
+**Status:** deferred — 真实数据依赖 05 暂缓（用户指令 2026-08-10；恢复后跑）
 
 - [ ] README 增加真实数据区段(benchmark 分、延迟、Agent 轨结论),可追溯到结果文档
 - [ ] good first issue 清单落地(≥5 个,标注难度与所需技能)

@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 — Judge 口径对齐重跑 → v0.4 可比基线
 
-**Status:** ready-for-agent
+**Status:** deferred — 真实评测暂缓执行（用户指令 2026-08-10；恢复后跑）
 
 - [ ] 注入侧改造:压制任务 prompt 类记忆,优先 feedback/解法类(09 报告建议)
 - [ ] seed 变体协议:OmniMath 改 seed 重出题,数据准备 + 评测命令

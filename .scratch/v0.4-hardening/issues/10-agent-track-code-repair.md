@@ -4,7 +4,7 @@
 
 **Blocked by:** 07 — Agent 轨二轮:同题不同 seed + 注入压制
 
-**Status:** ready-for-agent
+**Status:** deferred — 真实评测暂缓执行（用户指令 2026-08-10；恢复后跑）
 
 - [ ] 轻量修补任务集构造完成(无 docker 依赖,可本地运行 verifier)
 - [ ] baseline vs vatbrain 对照完成,重复试验,出 trend 结论
